@@ -18,6 +18,9 @@ def conn(env):
     db.init(c)
     ol_import.import_authors(c, s.dump_path("authors"), _noop, _no)
     ol_import.import_works(c, s.dump_path("works"), _noop, _no)
+    ol_import.import_editions(c, s.dump_path("editions"), _noop, _no)
+    ol_import.import_signals(c, s.dump_path("ratings"), "ratings", _noop, _no)
+    ol_import.import_signals(c, s.dump_path("reading-log"), "reading-log", _noop, _no)
     ol_import.build_indexes(c, _noop)
     yield c
     c.close()
@@ -25,10 +28,11 @@ def conn(env):
 
 def test_import_skips_junk(conn):
     names = {r["name"] for r in conn.execute("SELECT name FROM authors")}
-    assert names == {"J.R.R. Tolkien", "William Shakespeare", "Christopher Tolkien"}
+    assert names == {"J.R.R. Tolkien", "William Shakespeare", "Christopher Tolkien", "Hobbit Fan",
+                     "Antoine de Saint-Exupéry"}
     titles = {r["title"] for r in conn.execute("SELECT title FROM works")}
     assert "Orphan with no author" not in titles  # require_author default
-    assert "Hamlet" in titles and len(titles) == 5
+    assert "Hamlet" in titles and conn.execute("SELECT COUNT(*) FROM works").fetchone()[0] == 8
 
 
 def test_work_fields_parsed(conn):
@@ -54,7 +58,7 @@ def test_author_search_matches_alternate_names_and_prefix(conn):
 
 
 def test_work_search_by_title_and_author(conn):
-    assert search.search_works(conn, "hobbit")[0]["title"] == "The Hobbit"
+    assert search.search_works(conn, "hobbit")[0]["ol_key"] == "OL262758W"
     titles = {w["title"] for w in search.search_works(conn, "shakespeare")}
     assert titles == {"Hamlet", "Macbeth"}
     assert search.search_works(conn, "hobbit tolkien")[0]["authors"][0]["name"] == "J.R.R. Tolkien"
@@ -64,7 +68,7 @@ def test_search_survives_hostile_input(conn):
     for q in ['"', "NEAR(", "a OR", "*", "'; DROP TABLE works;--", ""]:
         search.search_works(conn, q)
         search.search_authors(conn, q)
-    assert conn.execute("SELECT COUNT(*) FROM works").fetchone()[0] == 5
+    assert conn.execute("SELECT COUNT(*) FROM works").fetchone()[0] == 8
 
 
 def test_author_page_orders_works_by_year(conn):
@@ -78,8 +82,8 @@ def test_reimport_is_idempotent(conn):
     ol_import.import_authors(conn, s.dump_path("authors"), _noop, _no)
     ol_import.import_works(conn, s.dump_path("works"), _noop, _no)
     ol_import.build_indexes(conn, _noop)
-    assert conn.execute("SELECT COUNT(*) FROM works").fetchone()[0] == 5
-    assert conn.execute("SELECT COUNT(*) FROM work_authors").fetchone()[0] == 5
+    assert conn.execute("SELECT COUNT(*) FROM works").fetchone()[0] == 8
+    assert conn.execute("SELECT COUNT(*) FROM work_authors").fetchone()[0] == 8
     assert len(search.search_works(conn, "hamlet")) == 1
 
 
@@ -112,7 +116,8 @@ def test_api_full_flow(env):
         assert [jobs[i]["status"] for i in job_ids] == ["done", "done"], jobs
 
         st = client.get("/api/status").json()
-        assert st["searchable"] and st["counts"] == {"authors": 3, "works": 5}
+        assert st["searchable"] and st["counts"] == {"authors": 5, "works": 8, "editions": 8, "isbns": 4,
+                                                     "rated_works": 2}
         assert client.get("/api/search/authors?q=tolkien").json()[0]["ol_key"] == "OL26320A"
         assert client.get("/api/authors/OL9388A").json()["work_count"] == 2
         assert client.get("/api/authors/NOPE").status_code == 404

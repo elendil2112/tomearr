@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DUMP_URL = "https://openlibrary.org/data/ol_dump_{kind}_latest.txt.gz"
-KINDS = ("authors", "works")
+KINDS = ("authors", "works", "editions", "ratings", "reading-log")
+CORE_KINDS = ("authors", "works")   # what the catalog needs at minimum; the rest improve matching and ranking
 
 
 @dataclass(frozen=True)

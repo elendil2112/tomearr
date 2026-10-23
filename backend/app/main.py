@@ -1,3 +1,4 @@
+import re
 from contextlib import asynccontextmanager
 
 import orjson
@@ -6,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, search
+from . import db, isbn, search
 from .config import KINDS, get_settings
 from .jobs import JobRunner
 
@@ -14,6 +15,21 @@ from .jobs import JobRunner
 class ImportRequest(BaseModel):
     kinds: list[str] = list(KINDS)
     require_author: bool = True
+    edition_languages: list[str] = []   # lite mode: keep only editions in these MARC codes (empty = all)
+    isbn_only: bool = False             # lite mode: keep only editions that have an ISBN
+
+    def job_params(self) -> dict:
+        return {"kinds": self.kinds, "require_author": self.require_author,
+                "edition_languages": [l.strip().lower() for l in self.edition_languages if l.strip()],
+                "isbn_only": self.isbn_only}
+
+
+class SettingsBody(BaseModel):
+    language: str | None = None
+
+
+LANG_RE = re.compile(r"^(all|[a-z]{3})$")
+DEFAULT_SETTINGS = {"language": "eng"}
 
 
 class DownloadRequest(BaseModel):
@@ -65,12 +81,12 @@ def create_app() -> FastAPI:
                     "partial_size": part.stat().st_size if part.exists() else 0,
                 })
             return {
-                "counts": {
-                    "authors": int(db.get_meta(conn, "count_authors", 0)),
-                    "works": int(db.get_meta(conn, "count_works", 0)),
-                },
+                "counts": {k: int(db.get_meta(conn, f"count_{k}", 0))
+                           for k in ("authors", "works", "editions", "isbns", "rated_works")},
                 "indexed_at": db.get_meta(conn, "indexed_at"),
                 "searchable": search.has_index(conn),
+                "schema_version": db.schema_version(conn),
+                "editions_lite": orjson.loads(db.get_meta(conn, "editions_lite", "null")),
                 "dumps": dumps,
                 "dump_dir": str(settings.dump_dir),
             }
@@ -85,7 +101,7 @@ def create_app() -> FastAPI:
     @app.post("/api/catalog/import")
     def catalog_import(req: ImportRequest):
         _check_kinds(req.kinds)
-        imp = runner.submit("import", {"kinds": req.kinds, "require_author": req.require_author})
+        imp = runner.submit("import", req.job_params())
         idx = runner.submit("index", {}, depends_on=imp)
         return {"job_ids": [imp, idx]}
 
@@ -94,7 +110,7 @@ def create_app() -> FastAPI:
         """Download, import, then index, as chained jobs."""
         _check_kinds(req.kinds)
         dl = runner.submit("download", {"kinds": req.kinds})
-        imp = runner.submit("import", {"kinds": req.kinds, "require_author": req.require_author}, depends_on=dl)
+        imp = runner.submit("import", req.job_params(), depends_on=dl)
         idx = runner.submit("index", {}, depends_on=imp)
         return {"job_ids": [dl, imp, idx]}
 
@@ -124,11 +140,59 @@ def create_app() -> FastAPI:
         finally:
             conn.close()
 
-    @app.get("/api/search/works")
-    def api_search_works(q: str = "", limit: int = Query(40, le=100)):
+    def get_settings_(conn) -> dict:
+        return {k: db.get_meta(conn, f"setting_{k}", v) for k, v in DEFAULT_SETTINGS.items()}
+
+    @app.get("/api/settings")
+    def api_get_settings():
         conn = conn_()
         try:
-            return search.search_works(conn, q, limit)
+            return get_settings_(conn)
+        finally:
+            conn.close()
+
+    @app.put("/api/settings")
+    def api_put_settings(body: SettingsBody):
+        conn = conn_()
+        try:
+            if body.language is not None:
+                lang = body.language.strip().lower()
+                if not LANG_RE.match(lang):
+                    raise HTTPException(400, "language must be a 3-letter MARC code (e.g. eng) or 'all'")
+                db.set_meta(conn, "setting_language", lang)
+            return get_settings_(conn)
+        finally:
+            conn.close()
+
+    @app.get("/api/search/works")
+    def api_search_works(q: str = "", limit: int = Query(40, le=100), lang: str | None = None):
+        conn = conn_()
+        try:
+            lang = (lang or get_settings_(conn)["language"]).lower()
+            if not LANG_RE.match(lang):
+                raise HTTPException(400, "bad language code")
+            return search.search_works(conn, q, limit, lang=lang)
+        finally:
+            conn.close()
+
+    @app.get("/api/isbn/{value}")
+    def api_isbn(value: str):
+        if not isbn.to_isbn13(value):
+            raise HTTPException(400, "not a valid ISBN-10 or ISBN-13")
+        conn = conn_()
+        try:
+            return search.lookup_isbn(conn, value)
+        finally:
+            conn.close()
+
+    @app.get("/api/works/{key}")
+    def api_work(key: str):
+        conn = conn_()
+        try:
+            w = search.get_work(conn, key)
+            if not w:
+                raise HTTPException(404, "work not found")
+            return w
         finally:
             conn.close()
 
