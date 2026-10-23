@@ -30,7 +30,9 @@ The full phased plan lives in the project notes; in short:
 docker compose up -d --build
 ```
 
-Then open `http://<tower-ip>:8080`, go to **Catalog**, and click **Download & build catalog**.
+Then open `http://<tower-ip>:8080`. Port 8080 taken? Create a `.env` file next to `docker-compose.yml` containing
+`TOMEARR_PORT=8222` (or any free port) instead of editing the compose file; `.env` is git-ignored, so `git pull`
+stays clean. Then, go to **Catalog**, and click **Download & build catalog**.
 
 | Container path | Purpose |
 |---|---|
