@@ -6,6 +6,7 @@ export default function Author({ olKey }) {
   const [author, setAuthor] = useState(null);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState("year");
 
   useEffect(() => {
     setAuthor(null);
@@ -16,8 +17,9 @@ export default function Author({ olKey }) {
   const works = useMemo(() => {
     if (!author) return [];
     const f = filter.trim().toLowerCase();
-    return f ? author.works.filter((w) => `${w.title} ${w.subtitle || ""}`.toLowerCase().includes(f)) : author.works;
-  }, [author, filter]);
+    const list = f ? author.works.filter((w) => `${w.title} ${w.subtitle || ""}`.toLowerCase().includes(f)) : author.works;
+    return sort === "popular" ? [...list].sort((a, b) => (b.popularity || 0) - (a.popularity || 0)) : list;
+  }, [author, filter, sort]);
 
   if (error) return <div className="notice error">{error}</div>;
   if (!author) return <p className="muted">Loading…</p>;
@@ -34,7 +36,13 @@ export default function Author({ olKey }) {
       </p>
       {alts.length > 0 && <p className="muted small-print">Also known as: {alts.slice(0, 8).join(", ")}</p>}
 
-      <input className="search compact" placeholder="Filter this author’s works" value={filter} onChange={(e) => setFilter(e.target.value)} />
+      <div className="search-bar">
+        <input className="search compact" placeholder="Filter this author’s works" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <select className="lang-select" value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort works">
+          <option value="year">Oldest first</option>
+          <option value="popular">Most popular</option>
+        </select>
+      </div>
       {works.length ? <WorkList works={works} /> : <p className="muted">No works match.</p>}
     </section>
   );

@@ -7,7 +7,7 @@ services:
     volumes:
       # SQLite database and settings. Keep this on cache/SSD if you can.
       - /mnt/user/appdata/tomearr/config:/config
-      # Downloaded Open Library dumps (~3.5 GB for authors + works). Can live on the array.
+      # Downloaded Open Library dumps (~13 GB with editions). Can live on the array.
       - /mnt/user/appdata/tomearr/data:/data
       # Added in later phases:
       # - /mnt/user/books/ingest:/ingest
