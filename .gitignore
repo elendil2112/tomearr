@@ -19,3 +19,6 @@ backend/data/
 .DS_Store
 .vscode/
 .idea/
+
+# local overrides for docker compose (ports, etc.)
+.env
