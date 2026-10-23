@@ -3,8 +3,8 @@ services:
     build: .
     container_name: tomearr
     ports:
-      # Host port: set TOMEARR_PORT in a .env file next to this one (e.g. TOMEARR_PORT=8222). Default 8080.
-      - "${TOMEARR_PORT:-8080}:8080"
+      # Host port: 8222 by default. To change it, set TOMEARR_PORT in a .env file next to this one.
+      - "${TOMEARR_PORT:-8222}:8222"
     volumes:
       # SQLite database and settings. Keep this on cache/SSD if you can.
       - /mnt/user/appdata/tomearr/config:/config
