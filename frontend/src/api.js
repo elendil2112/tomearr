@@ -28,9 +28,32 @@ export const api = {
   reindex: () => post("/api/catalog/reindex"),
   cancel: (id) => post(`/api/jobs/${id}/cancel`),
   searchAuthors: (q) => request(`/api/search/authors?q=${encodeURIComponent(q)}`),
-  searchWorks: (q) => request(`/api/search/works?q=${encodeURIComponent(q)}`),
+  searchWorks: (q, lang) =>
+    request(`/api/search/works?q=${encodeURIComponent(q)}${lang ? `&lang=${encodeURIComponent(lang)}` : ""}`),
   author: (key) => request(`/api/authors/${encodeURIComponent(key)}`),
+  work: (key) => request(`/api/works/${encodeURIComponent(key)}`),
+  isbn: (value) => request(`/api/isbn/${encodeURIComponent(value)}`),
+  settings: () => request("/api/settings"),
+  saveSettings: (body) =>
+    request("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
 };
+
+/** The search text as a bare ISBN (digits/X only), or null. The server does the checksum validation. */
+export function isbnFromQuery(q) {
+  const s = (q || "").trim().replace(/^isbn(?:-?1[03])?\s*:?\s*/i, "");
+  if (!s || /[^0-9Xx\-\s]/.test(s)) return null;
+  const bare = s.replace(/[^0-9Xx]/g, "");
+  return bare.length === 10 || bare.length === 13 ? bare : null;
+}
+
+// MARC language codes, as Open Library uses them. The most common ones in the catalog, roughly.
+export const LANGUAGES = [
+  ["eng", "English"], ["spa", "Spanish"], ["fre", "French"], ["ger", "German"], ["ita", "Italian"],
+  ["por", "Portuguese"], ["dut", "Dutch"], ["rus", "Russian"], ["pol", "Polish"], ["swe", "Swedish"],
+  ["dan", "Danish"], ["nor", "Norwegian"], ["fin", "Finnish"], ["jpn", "Japanese"], ["chi", "Chinese"],
+  ["kor", "Korean"], ["ara", "Arabic"], ["heb", "Hebrew"], ["lat", "Latin"], ["gre", "Greek, Modern"],
+];
+export const languageName = (code) => LANGUAGES.find(([c]) => c === code)?.[1] || code;
 
 export function formatBytes(n) {
   if (!n) return "0 B";

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Catalog from "./pages/Catalog.jsx";
 import Search from "./pages/Search.jsx";
 import Author from "./pages/Author.jsx";
+import Work from "./pages/Work.jsx";
 
 function useHashRoute() {
   const read = () => window.location.hash.replace(/^#\/?/, "") || "search";
@@ -36,7 +37,7 @@ export default function App() {
         </a>
         <nav>
           {NAV.map((n) => (
-            <a key={n.id} href={`#/${n.id}`} className={page === n.id || (n.id === "search" && page === "author") ? "active" : ""}>
+            <a key={n.id} href={`#/${n.id}`} className={page === n.id || (n.id === "search" && (page === "author" || page === "work")) ? "active" : ""}>
               {n.label}
             </a>
           ))}
@@ -45,7 +46,8 @@ export default function App() {
       <main className="content">
         {page === "catalog" && <Catalog />}
         {page === "author" && <Author olKey={arg} />}
-        {page !== "catalog" && page !== "author" && <Search />}
+        {page === "work" && <Work olKey={arg} />}
+        {!["catalog", "author", "work"].includes(page) && <Search />}
       </main>
     </div>
   );

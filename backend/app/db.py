@@ -1,7 +1,8 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA = """
+# Version 1: the Phase 1 schema. Each later entry in MIGRATIONS moves the database up one version.
+SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -45,6 +46,57 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 """
 
+# Editions and ISBNs are bulk loaded with no indexes; build_indexes() adds them afterwards, which is much
+# faster than maintaining B-trees during a 40M+ row insert.
+EDITIONS_DDL = """
+CREATE TABLE IF NOT EXISTS editions (
+    ol_key TEXT NOT NULL,             -- e.g. OL7353617M
+    work_key TEXT NOT NULL,
+    title TEXT,
+    subtitle TEXT,
+    language TEXT,                    -- MARC code of the first listed language, e.g. eng
+    publisher TEXT,
+    publish_year INTEGER,
+    pages INTEGER,
+    format TEXT                       -- ebook | print | audio | NULL (unknown)
+);
+
+CREATE TABLE IF NOT EXISTS isbns (
+    isbn TEXT NOT NULL,               -- normalized ISBN-13
+    edition_key TEXT NOT NULL
+);
+"""
+
+SIGNALS_DDL = """
+CREATE TABLE IF NOT EXISTS work_signals (
+    work_key TEXT PRIMARY KEY,
+    rating_sum INTEGER NOT NULL DEFAULT 0,
+    rating_count INTEGER NOT NULL DEFAULT 0,
+    want_count INTEGER NOT NULL DEFAULT 0,
+    reading_count INTEGER NOT NULL DEFAULT 0,
+    read_count INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID;
+"""
+
+
+def _migrate_2(conn: sqlite3.Connection) -> None:
+    """Phase 2: editions, ISBNs, ratings/reading-log signals, popularity columns on works."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(works)")}
+    for name, ddl in (
+        ("edition_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("ebook_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("languages", "TEXT"),            # ',eng,fre,' (wrapped in commas so instr() can match whole codes)
+        ("popularity", "REAL NOT NULL DEFAULT 0"),
+        ("pop_rank", "INTEGER"),          # 1 = most popular; also the works_fts rowid once rebuilt
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE works ADD COLUMN {name} {ddl}")
+    conn.executescript(EDITIONS_DDL + SIGNALS_DDL)
+
+
+MIGRATIONS = [_migrate_2]  # MIGRATIONS[i] upgrades version i+1 to i+2
+SCHEMA_VERSION = 1 + len(MIGRATIONS)
+
 
 def connect(path: Path | str) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path), timeout=60, check_same_thread=False)
@@ -56,8 +108,28 @@ def connect(path: Path | str) -> sqlite3.Connection:
     return conn
 
 
+def schema_version(conn: sqlite3.Connection) -> int:
+    return int(get_meta(conn, "schema_version", 1))
+
+
 def init(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA)
+    """Create the base schema if needed, then apply any pending migrations in order."""
+    conn.executescript(SCHEMA_V1)
+    conn.commit()
+    version = schema_version(conn)
+    for i in range(version - 1, len(MIGRATIONS)):
+        with conn:
+            MIGRATIONS[i](conn)
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(i + 2),),
+            )
+
+
+def reset_editions(conn: sqlite3.Connection) -> None:
+    """Editions and ISBNs come wholly from the editions dump, so a reimport starts from empty tables."""
+    conn.executescript("DROP TABLE IF EXISTS editions; DROP TABLE IF EXISTS isbns;" + EDITIONS_DDL)
     conn.commit()
 
 

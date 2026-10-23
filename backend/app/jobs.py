@@ -158,18 +158,24 @@ class JobRunner:
                               lambda p, k=k: progress({"file": k, **p}), cancelled)
         elif kind == "import":
             kinds = params.get("kinds", list(KINDS))
-            # authors first so works can reference them
-            if "authors" in kinds:
-                path = s.dump_path("authors")
+            # authors first so works can reference them; the rest only need work keys
+            for k in KINDS:
+                if k not in kinds:
+                    continue
+                path = s.dump_path(k)
                 if not path.exists():
                     raise FileNotFoundError(f"{path.name} not found in the dumps folder")
-                ol_import.import_authors(conn, path, progress, cancelled)
-            if "works" in kinds:
-                path = s.dump_path("works")
-                if not path.exists():
-                    raise FileNotFoundError(f"{path.name} not found in the dumps folder")
-                ol_import.import_works(conn, path, progress, cancelled,
-                                       require_author=params.get("require_author", True))
+                if k == "authors":
+                    ol_import.import_authors(conn, path, progress, cancelled)
+                elif k == "works":
+                    ol_import.import_works(conn, path, progress, cancelled,
+                                           require_author=params.get("require_author", True))
+                elif k == "editions":
+                    ol_import.import_editions(conn, path, progress, cancelled,
+                                              languages=params.get("edition_languages") or None,
+                                              isbn_only=params.get("isbn_only", False))
+                else:
+                    ol_import.import_signals(conn, path, k, progress, cancelled)
         elif kind == "index":
             ol_import.build_indexes(conn, progress)
         else:

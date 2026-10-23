@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api.js";
+import { api, isbnFromQuery, LANGUAGES } from "../api.js";
 import WorkList from "../components/WorkList.jsx";
 
 function lifespan(a) {
@@ -14,10 +14,18 @@ export default function Search() {
   const [authors, setAuthors] = useState([]);
   const [searched, setSearched] = useState(false);
   const [ready, setReady] = useState(true);
+  const [lang, setLang] = useState(null); // null until settings load
+  const [isbnHit, setIsbnHit] = useState(null);
 
   useEffect(() => {
     api.status().then((s) => setReady(s.searchable)).catch(() => {});
+    api.settings().then((s) => setLang(s.language)).catch(() => setLang("eng"));
   }, []);
+
+  const changeLang = (value) => {
+    setLang(value);
+    api.saveSettings({ language: value }).catch(() => {});
+  };
 
   useEffect(() => {
     try {
@@ -25,17 +33,32 @@ export default function Search() {
     } catch {
       /* storage unavailable */
     }
-    if (!q.trim()) {
+    if (!q.trim() || lang === null) {
       setWorks([]);
       setAuthors([]);
+      setIsbnHit(null);
       setSearched(false);
       return;
     }
     let live = true;
     const t = setTimeout(async () => {
       try {
-        const [w, a] = await Promise.all([api.searchWorks(q), api.searchAuthors(q)]);
+        const isbn = isbnFromQuery(q);
+        if (isbn) {
+          const hit = await api.isbn(isbn).catch(() => null);
+          if (!live) return;
+          if (hit) {
+            setIsbnHit(hit);
+            setWorks(hit.works);
+            setAuthors([]);
+            setTab("works");
+            setSearched(true);
+            return;
+          }
+        }
+        const [w, a] = await Promise.all([api.searchWorks(q, lang), api.searchAuthors(q)]);
         if (!live) return;
+        setIsbnHit(null);
         setWorks(w);
         setAuthors(a);
         setSearched(true);
@@ -47,18 +70,34 @@ export default function Search() {
       live = false;
       clearTimeout(t);
     };
-  }, [q]);
+  }, [q, lang]);
 
   return (
     <section>
       <h1>Search the catalog</h1>
-      <input
-        className="search"
-        autoFocus
-        placeholder="Title or author, e.g. “tolkien hobbit”"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
+      <div className="search-bar">
+        <input
+          className="search"
+          autoFocus
+          placeholder="Title, author or ISBN, e.g. “tolkien hobbit”"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <select
+          className="lang-select"
+          value={lang ?? "eng"}
+          onChange={(e) => changeLang(e.target.value)}
+          aria-label="Book language"
+          title="Only show books with an edition in this language (books with no known language are always shown)"
+        >
+          <option value="all">All languages</option>
+          {LANGUAGES.map(([code, name]) => (
+            <option key={code} value={code}>
+              {name}
+            </option>
+          ))}
+        </select>
+      </div>
 
       {!ready && (
         <div className="notice">
@@ -66,7 +105,17 @@ export default function Search() {
         </div>
       )}
 
-      {searched && (
+      {searched && isbnHit && (
+        <p className="muted small-print">
+          ISBN <span className="mono">{isbnHit.isbn}</span>:{" "}
+          {isbnHit.works.length
+            ? `${isbnHit.editions.length} ${isbnHit.editions.length === 1 ? "edition" : "editions"} found`
+            : "no edition in the catalog has this ISBN"}
+        </p>
+      )}
+      {searched && isbnHit && isbnHit.works.length > 0 && <WorkList works={isbnHit.works} showAuthors />}
+
+      {searched && !isbnHit && (
         <>
           <div className="tabs" role="tablist">
             <button role="tab" aria-selected={tab === "works"} className={tab === "works" ? "on" : ""} onClick={() => setTab("works")}>

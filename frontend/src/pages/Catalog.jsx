@@ -9,6 +9,16 @@ const KIND_LABEL = {
   index: "Build search index",
 };
 
+const DUMP_INFO = {
+  authors: "about 0.5 GB · required",
+  works: "about 2.9 GB · required",
+  editions: "about 9 GB · ISBNs, languages, edition counts",
+  ratings: "a few MB · popularity",
+  "reading-log": "about 65 MB · popularity",
+};
+
+const pct = (p) => (p.total ? ` (${Math.floor((100 * p.bytes) / p.total)}%)` : "");
+
 function describe(job) {
   const p = job.progress || {};
   if (job.kind === "download" && p.total) {
@@ -16,7 +26,7 @@ function describe(job) {
   }
   if (job.kind === "download" && p.step) return p.step;
   if (job.kind === "import" && p.lines != null) {
-    return `${p.phase}: ${formatNumber(p.lines)} lines read, ${formatNumber(p.kept)} kept`;
+    return `${p.phase}: ${formatNumber(p.lines)} lines read, ${formatNumber(p.kept)} kept${pct(p)}`;
   }
   if (job.kind === "index" && p.step) return p.step;
   return "";
@@ -24,7 +34,7 @@ function describe(job) {
 
 function fraction(job) {
   const p = job.progress || {};
-  return job.kind === "download" && p.total ? Math.min(1, p.bytes / p.total) : null;
+  return (job.kind === "download" || job.kind === "import") && p.total ? Math.min(1, p.bytes / p.total) : null;
 }
 
 function JobRow({ job, onCancel }) {
@@ -55,14 +65,23 @@ export default function Catalog() {
   const [status, setStatus] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [error, setError] = useState("");
-  const [kinds, setKinds] = useState({ authors: true, works: true });
+  const [kinds, setKinds] = useState(null); // chosen once the dump list loads
   const [requireAuthor, setRequireAuthor] = useState(true);
+  const [isbnOnly, setIsbnOnly] = useState(false);
+  const [editionLangs, setEditionLangs] = useState("");
 
   const refresh = useCallback(async () => {
     try {
       const [s, j] = await Promise.all([api.status(), api.jobs()]);
       setStatus(s);
       setJobs(j);
+      // Default to whatever hasn't been downloaded yet; if everything is there, select all (a refresh).
+      setKinds((k) => {
+        if (k) return k;
+        const missing = s.dumps.filter((d) => !d.present).map((d) => d.kind);
+        const pick = missing.length ? missing : s.dumps.map((d) => d.kind);
+        return Object.fromEntries(s.dumps.map((d) => [d.kind, pick.includes(d.kind)]));
+      });
       setError("");
     } catch (e) {
       setError(e.message);
@@ -77,17 +96,23 @@ export default function Catalog() {
     return () => clearInterval(t);
   }, [refresh, busy]);
 
-  const selected = Object.keys(kinds).filter((k) => kinds[k]);
+  const selected = Object.keys(kinds || {}).filter((k) => kinds[k]);
   const run = (fn) => async () => {
     try {
-      await fn({ kinds: selected, require_author: requireAuthor });
+      await fn({
+        kinds: selected,
+        require_author: requireAuthor,
+        isbn_only: isbnOnly,
+        edition_languages: editionLangs.split(/[\s,]+/).filter(Boolean),
+      });
       refresh();
     } catch (e) {
       setError(e.message);
     }
   };
 
-  const allDumps = status?.dumps?.every((d) => d.present);
+  const selectedPresent = selected.length > 0 && status?.dumps?.filter((d) => kinds[d.kind]).every((d) => d.present);
+  const lite = status?.editions_lite;
 
   return (
     <section>
@@ -109,6 +134,13 @@ export default function Catalog() {
           <div className="tile-label">works</div>
         </div>
         <div className="tile">
+          <div className="tile-num">{formatNumber(status?.counts.editions)}</div>
+          <div className="tile-label">
+            editions · {formatNumber(status?.counts.isbns)} ISBNs
+            {lite && (lite.isbn_only || lite.languages.length > 0) ? " · lite" : ""}
+          </div>
+        </div>
+        <div className="tile">
           <div className="tile-num small">{status?.searchable ? "Ready" : "Not built"}</div>
           <div className="tile-label">search index{status?.indexed_at ? ` · ${status.indexed_at} UTC` : ""}</div>
         </div>
@@ -122,10 +154,11 @@ export default function Catalog() {
               <label>
                 <input
                   type="checkbox"
-                  checked={!!kinds[d.kind]}
+                  checked={!!kinds?.[d.kind]}
                   onChange={(e) => setKinds({ ...kinds, [d.kind]: e.target.checked })}
                 />
-                <span className="dump-name">{d.kind}</span>
+                <span className="dump-name">{d.kind.replace("-", " ")}</span>
+                <span className="muted dump-info">{DUMP_INFO[d.kind]}</span>
               </label>
               <span className={d.present ? "ok" : "muted"}>
                 {d.present
@@ -139,18 +172,40 @@ export default function Catalog() {
         </ul>
         <p className="muted small-print">
           Files live in <code>{status?.dump_dir}</code>. Already have the dumps (for example from the torrent)? Drop
-          them in that folder as <code>ol_dump_authors.txt.gz</code> and <code>ol_dump_works.txt.gz</code> and use
-          “Import only”.
+          them in that folder named like <code>ol_dump_editions.txt.gz</code> (no date) and use “Import only”. You can
+          import the extra dumps on their own later; the search index is rebuilt after every import.
         </p>
         <label className="check">
           <input type="checkbox" checked={requireAuthor} onChange={(e) => setRequireAuthor(e.target.checked)} />
           Skip works that have no author (keeps the database smaller and cleaner)
         </label>
+        {kinds?.editions && (
+          <fieldset className="lite">
+            <legend>Editions lite mode (optional, saves disk space)</legend>
+            <label className="check">
+              <input type="checkbox" checked={isbnOnly} onChange={(e) => setIsbnOnly(e.target.checked)} />
+              Only keep editions that have an ISBN
+            </label>
+            <label className="field">
+              <span>Only keep editions in these languages</span>
+              <input
+                type="text"
+                placeholder="e.g. eng, spa (blank keeps all)"
+                value={editionLangs}
+                onChange={(e) => setEditionLangs(e.target.value)}
+              />
+            </label>
+            <p className="muted small-print">
+              Editions with no language listed are always kept. Dropping editions also lowers edition counts, which
+              feed the popularity ranking.
+            </p>
+          </fieldset>
+        )}
         <div className="actions">
           <button className="primary" disabled={busy || !selected.length} onClick={run(api.build)}>
             Download &amp; build catalog
           </button>
-          <button disabled={busy || !allDumps || !selected.length} onClick={run(api.importDumps)}>
+          <button disabled={busy || !selectedPresent} onClick={run(api.importDumps)}>
             Import only
           </button>
           <button disabled={busy} onClick={() => api.reindex().then(refresh).catch((e) => setError(e.message))}>
