@@ -1,0 +1,21 @@
+# dependencies and build output
+node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# runtime data (database and downloaded Open Library dumps)
+config/
+data/
+backend/config/
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+*.part
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/

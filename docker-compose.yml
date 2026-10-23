@@ -1,0 +1,15 @@
+services:
+  tomearr:
+    build: .
+    container_name: tomearr
+    ports:
+      - "8080:8080"
+    volumes:
+      # SQLite database and settings. Keep this on cache/SSD if you can.
+      - /mnt/user/appdata/tomearr/config:/config
+      # Downloaded Open Library dumps (~3.5 GB for authors + works). Can live on the array.
+      - /mnt/user/appdata/tomearr/data:/data
+      # Added in later phases:
+      # - /mnt/user/books/ingest:/ingest
+      # - /mnt/user/books/calibre:/calibre
+    restart: unless-stopped
