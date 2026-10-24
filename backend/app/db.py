@@ -128,7 +128,14 @@ def _migrate_3(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS = [_migrate_2, _migrate_3]  # MIGRATIONS[i] upgrades version i+1 to i+2
+def _migrate_4(conn: sqlite3.Connection) -> None:
+    """Problems Tomearr found in a Calibre record (comma separated codes, e.g. 'isbn_mismatch')."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(library_books)")}
+    if "issues" not in cols:
+        conn.execute("ALTER TABLE library_books ADD COLUMN issues TEXT")
+
+
+MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4]  # MIGRATIONS[i] upgrades version i+1 to i+2
 SCHEMA_VERSION = 1 + len(MIGRATIONS)
 
 

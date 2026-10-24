@@ -20,6 +20,7 @@ FILTERS = {
     "low": f"work_key IS NOT NULL AND match_locked = 0 AND match_confidence < {LOW_CONFIDENCE}",
     "not_epub": "(formats IS NULL OR instr(formats, ',EPUB,') = 0)",
     "manual": "match_locked = 1",
+    "issues": "issues IS NOT NULL",
 }
 
 
@@ -37,9 +38,9 @@ def test_connection(path: str, cache_dir: Path) -> dict:
 
 UPSERT = """
 INSERT INTO library_books(calibre_id, title, authors, author_sort, isbn, ol_id, formats, language, series,
-    series_index, pubdate, has_cover, last_modified, work_key, match_method, match_confidence, synced_at)
+    series_index, pubdate, has_cover, last_modified, work_key, match_method, match_confidence, issues, synced_at)
 VALUES(:calibre_id, :title, :authors, :author_sort, :isbn, :ol_id, :formats, :language, :series,
-    :series_index, :pubdate, :has_cover, :last_modified, :work_key, :match_method, :match_confidence, :now)
+    :series_index, :pubdate, :has_cover, :last_modified, :work_key, :match_method, :match_confidence, :issues, :now)
 ON CONFLICT(calibre_id) DO UPDATE SET
     title=excluded.title, authors=excluded.authors, author_sort=excluded.author_sort, isbn=excluded.isbn,
     ol_id=excluded.ol_id, formats=excluded.formats, language=excluded.language, series=excluded.series,
@@ -50,7 +51,8 @@ ON CONFLICT(calibre_id) DO UPDATE SET
     match_method=CASE WHEN library_books.match_locked = 1 OR :keep_match THEN library_books.match_method
                       ELSE excluded.match_method END,
     match_confidence=CASE WHEN library_books.match_locked = 1 OR :keep_match THEN library_books.match_confidence
-                          ELSE excluded.match_confidence END
+                          ELSE excluded.match_confidence END,
+    issues=CASE WHEN :keep_match THEN library_books.issues ELSE excluded.issues END
 """
 
 
@@ -78,17 +80,20 @@ def sync(conn: sqlite3.Connection, cache_dir: Path, progress, cancelled, rematch
             progress({"step": "matching", "done": done, "total": total, "matched": matched_now})
         cid = book["calibre_id"]
         seen.add(cid)
+        # Clean Calibre's author strings ("Tolkien| J.R.R." -> "J.R.R. Tolkien") for display and matching.
+        authors = matcher.split_authors(book["authors"].replace(" & ", " ; "))
+        book = {**book, "authors": " & ".join(authors)}
         old = prev.get(cid)
         need = can_match and (rematch or old is None or old[0] != book["last_modified"] or old[1] is None)
         if old and old[2]:
             need = False
         m = matcher.Match(None, None, 0)
         if need:
-            authors = [a.strip() for a in book["authors"].split(" & ") if a.strip()]
             m = matcher.match_book(conn, book["title"], authors, book["isbn"], book["ol_id"])
             matched_now += m.work_key is not None
         conn.execute(UPSERT, {**book, "work_key": m.work_key, "match_method": m.method,
-                              "match_confidence": m.confidence, "now": now, "keep_match": int(not need)})
+                              "match_confidence": m.confidence, "issues": ",".join(m.issues) or None,
+                              "now": now, "keep_match": int(not need)})
         done += 1
         if done % 500 == 0:
             conn.commit()
@@ -143,6 +148,7 @@ def list_books(conn: sqlite3.Connection, q: str = "", filt: str = "all", offset:
     for r in rows:
         d = dict(r)
         d["formats"] = [f for f in (d["formats"] or "").split(",") if f]
+        d["issues"] = [i for i in (d.get("issues") or "").split(",") if i]
         items.append(d)
     return {"total": total, "offset": offset, "items": items}
 

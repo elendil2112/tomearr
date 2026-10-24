@@ -218,3 +218,5 @@ fieldset.lite legend { font-weight: 600; font-size: 0.9rem; padding: 0 6px; }
 }
 .card .notice { margin: 14px 0 0; }
 .field select { max-width: 320px; }
+.issue { font-size: 0.78rem; color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, var(--card));
+  padding: 1px 8px; border-radius: 999px; }

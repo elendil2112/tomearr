@@ -74,7 +74,15 @@ compose file. Then check it under **Settings → Test connection**, then **Libra
   is safe while Calibre, the content server or Calibre-Web is running. If Calibre writes during the copy it
   retries.
 - Each book is matched to a catalog work: Calibre's `openlibrary` identifier first, then ISBN, then title plus
-  author (fuzzy). Matches show their method and a confidence; **Check match** lists anything under 90%.
+  author (fuzzy), then the titles of that author's editions (catches translations, e.g. a Swedish "Lida" is
+  King's "Misery"). Matches show their method and a confidence; **Check match** lists anything under 90%.
+- Tomearr expects messy records and works around them rather than asking you to clean Calibre first: author
+  strings are cleaned (Calibre's `Tolkien| J.R.R.`, roles like "(Editor)", stray quotes, "Unknown"), titles are
+  read with and without volume numbers, series notes and an author name tacked on, and a title match with a
+  clearly different author is never accepted.
+- Problems in a Calibre record itself are flagged under **Calibre problems**, for example an ISBN that belongs to a
+  different book (the title and author win, and the ISBN is reported). Writing corrections back into Calibre
+  comes with Phase 6.
 - Use **fix** on a book to pick the right work or mark it "not in the catalog". Manual matches are never
   changed by a sync; "Back to automatic" undoes one.
 - Re-syncing only re-matches books that changed in Calibre or are still unmatched (or everything, with
@@ -108,7 +116,7 @@ compose file. Then check it under **Settings → Test connection**, then **Libra
 | `GET/PUT /api/settings` | `{"language": "eng", "calibre_path": "/calibre"}` |
 | `POST /api/library/test` | check a Calibre folder (`{"path": ...}`, defaults to the setting) |
 | `POST /api/library/sync` | sync job (`{"rematch": true}` re-matches everything except manual matches) |
-| `GET /api/library?q=&filter=&offset=&limit=` | owned books; `filter`: all, matched, unmatched, low, not_epub, manual |
+| `GET /api/library?q=&filter=&offset=&limit=` | owned books; `filter`: all, matched, unmatched, low, not_epub, issues, manual |
 | `GET /api/library/stats` | counts by match method and format |
 | `PUT/DELETE /api/library/{calibre_id}/match` | set a manual match (`{"work_key": "OL…W"}` or `null`) / clear it |
 | `POST /api/catalog/{download,import,build,reindex}` | catalog jobs; import/build take `kinds`, `require_author`, `edition_languages`, `isbn_only` |
