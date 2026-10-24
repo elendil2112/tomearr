@@ -211,7 +211,24 @@ def write_meta(path: Path, meta: dict) -> None:
         args += ["--language", ",".join(meta["languages"])]
     if meta.get("pubdate"):
         args += ["--date", meta["pubdate"]]
+    if meta.get("cover"):
+        args += ["--cover", str(meta["cover"])]
     _run(args, 120)
+
+
+def has_cover(path: Path) -> bool:
+    """Whether an ebook file has a cover image (asks ebook-meta to extract it)."""
+    exe = tool("ebook-meta")
+    if not exe:
+        return True   # can't tell; don't go fetching
+    out = path.with_suffix(".cover-check.jpg")
+    try:
+        msg = _run([exe, str(path), "--get-cover", str(out)], 120, merge=True)
+        return "No cover found" not in msg and out.is_file() and out.stat().st_size > 0
+    except CalibreCLIError:
+        return True
+    finally:
+        out.unlink(missing_ok=True)
 
 
 def unpack(archive: Path, dest: Path, timeout: int = 15 * 60) -> list[Path]:

@@ -252,6 +252,10 @@ function CalibreWriteSettings({ settings, save, saved }) {
         Move ingest files that are identical to a file already in Calibre to the trash
       </label>
       <label className="check">
+        <input type="checkbox" checked={settings.fetch_covers} onChange={(e) => save({ fetch_covers: e.target.checked }, "covers")} />
+        Give imported books the Open Library cover when the file has none
+      </label>
+      <label className="check">
         <input type="checkbox" checked={settings.import_auto} onChange={(e) => save({ import_auto: e.target.checked }, "auto")} />
         Import automatically after each scan (confident matches and files you accepted; PDFs still need your OK)
       </label>

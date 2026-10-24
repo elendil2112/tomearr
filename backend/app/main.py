@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import calibre_cli, db, importer, ingest, isbn, library, review, search
+from . import calibre_cli, covers, db, importer, ingest, isbn, library, review, search
 from .scheduler import Scheduler
 from .config import KINDS, get_settings
 from .jobs import JobRunner
@@ -41,6 +41,7 @@ class SettingsBody(BaseModel):
     replace_formats: str | None = None
     delete_duplicates: bool | None = None
     import_auto: bool | None = None
+    fetch_covers: bool | None = None
 
 
 class ImportRun(BaseModel):
@@ -209,7 +210,7 @@ def create_app() -> FastAPI:
         out = {k: db.get_meta(conn, f"setting_{k}", v) for k, v in DEFAULT_SETTINGS.items()}
         for k in NUMERIC_SETTINGS:
             out[k] = float(out[k]) if "." in str(out[k]) else int(out[k])
-        for k in ("delete_duplicates", "import_auto"):
+        for k in ("delete_duplicates", "import_auto", "fetch_covers"):
             out[k] = str(out[k]) == "1"
         out["calibre_password_set"] = bool(db.get_meta(conn, "setting_calibre_password"))
         return out
@@ -260,7 +261,7 @@ def create_app() -> FastAPI:
                 fm = ",".join(sorted({f.strip().upper() for f in body.replace_formats.split(",")
                                       if f.strip() and f.strip().upper() != "EPUB"}))
                 db.set_meta(conn, "setting_replace_formats", fm)
-            for k in ("delete_duplicates", "import_auto"):
+            for k in ("delete_duplicates", "import_auto", "fetch_covers"):
                 v = getattr(body, k)
                 if v is not None:
                     db.set_meta(conn, f"setting_{k}", "1" if v else "0")
@@ -484,6 +485,18 @@ def create_app() -> FastAPI:
     @app.get("/api/import/plan")
     def import_plan(library: bool = False):
         return importing(lambda c: importer.plan_library(c) if library else importer.plan(c))
+
+    @app.get("/api/covers/missing")
+    def covers_missing():
+        def m(c):
+            r = covers.missing(c)
+            r["items"] = r["items"][:200]
+            return r
+        return importing(m)
+
+    @app.post("/api/covers/fix")
+    def covers_fix():
+        return {"job_id": runner.submit("fix_covers", {})}
 
     @app.post("/api/import/run")
     def import_run(body: ImportRun):

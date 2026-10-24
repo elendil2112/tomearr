@@ -165,6 +165,11 @@ book or EPUB comes out of Calibre, replaced formats go back in, and the original
 - **Duplicates** of a file already in Calibre go to the trash (a setting).
 - **Books already in Calibre** that only have MOBI/AZW3/...: the second tab converts them to EPUB the same way.
 - **Import automatically** after each scan is a setting (off by default).
+- **Covers:** when an imported EPUB has no cover, the Open Library cover for its work (or its ISBN) is embedded
+  before it goes into Calibre. **Library → Covers** does the same for books already in Calibre that have none.
+  Only coverless books are touched. Covers by id come from the catalog; ISBN lookups are spaced ~3 s apart for
+  Open Library's rate limit, and results (including misses) are cached in `/config/cache/covers`. Calibre has no
+  command to remove a cover, so cover fixes can't be undone from Tomearr; change one in Calibre or Calibre-Web.
 
 **How Tomearr writes to Calibre.** By default it runs `calibredb --library-path /calibre` directly: no login, the
 same way Calibre-Web writes to the library. The Calibre desktop app keeps its own view in memory and shows books

@@ -10,6 +10,7 @@ const KIND_LABEL = {
   library_sync: "Sync Calibre library",
   ingest_scan: "Scan ingest folder",
   calibre_import: "Import into Calibre",
+  fix_covers: "Fetch missing covers",
 };
 
 const DUMP_INFO = {
@@ -38,13 +39,16 @@ function describe(job) {
   if (job.kind === "calibre_import" && p.total != null)
     return p.step === "done" ? `${p.done} done, ${p.failed} failed` : `${formatNumber(p.done)} of ${formatNumber(p.total)}${p.current ? `: ${p.current}` : ""}`;
   if (job.kind === "calibre_import" && p.step) return p.step;
+  if (job.kind === "fix_covers" && p.step === "done")
+    return `${p.fixed} covers added, ${p.not_found} not on Open Library${p.failed ? `, ${p.failed} failed` : ""}`;
+  if (job.kind === "fix_covers" && p.total) return `${formatNumber(p.done)} of ${formatNumber(p.total)}, ${p.fixed} added`;
   if (job.kind === "library_sync" && p.step) return p.step;
   return "";
 }
 
 function fraction(job) {
   const p = job.progress || {};
-  if (["library_sync", "ingest_scan", "calibre_import"].includes(job.kind) && p.total) return Math.min(1, (p.done || 0) / p.total);
+  if (["library_sync", "ingest_scan", "calibre_import", "fix_covers"].includes(job.kind) && p.total) return Math.min(1, (p.done || 0) / p.total);
   return (job.kind === "download" || job.kind === "import") && p.total ? Math.min(1, p.bytes / p.total) : null;
 }
 
@@ -67,7 +71,7 @@ export function JobRow({ job, onCancel }) {
           <span style={frac != null ? { width: `${frac * 100}%` } : undefined} />
         </div>
       )}
-      <div className="job-sub">{job.message || (job.status === "running" ? describe(job) : "")}</div>
+      <div className="job-sub">{job.message || (["running", "done"].includes(job.status) ? describe(job) : "")}</div>
     </li>
   );
 }

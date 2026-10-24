@@ -12,6 +12,7 @@ const KIND = {
   pdf_hold: ["PDF", "Held until you opt in"],
   pdf_waiting: ["PDF, check result", "Waiting for your approval"],
   convert_existing: ["Convert", "Book in Calibre converted to EPUB"],
+  set_cover: ["Cover", "Cover added from Open Library"],
 };
 const ORDER = ["add", "add_format", "convert_existing", "pdf_convert", "unpack", "delete_duplicate", "already_have",
   "pdf_waiting", "pdf_hold"];
@@ -179,11 +180,12 @@ function History({ refreshKey }) {
                     {r.calibre_id ? ` (#${r.calibre_id})` : ""}
                     {r.source_format && r.added_format && r.source_format !== "EPUB" ? ` · converted from ${r.source_format}` : ""}
                     {r.removed?.length ? ` · removed ${r.removed.map((x) => x.format).join(", ")}` : ""}
+                    {r.meta?.cover_added ? " · cover from Open Library" : ""}
                     {r.meta?.kept_formats?.length ? ` · kept ${r.meta.kept_formats.join(", ")} (couldn't back it up)` : ""}
                     {r.error ? ` · ${r.error}` : ""}
                   </span>
                 </span>
-                {r.status === "done" && (
+                {r.status === "done" && r.action !== "set_cover" && (
                   <button className="link" onClick={() => undo(() => api.importUndo(r.id))}>
                     undo
                   </button>

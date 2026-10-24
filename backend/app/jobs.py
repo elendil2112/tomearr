@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import orjson
 
-from . import db, importer, ingest, library, ol_import
+from . import covers, db, importer, ingest, library, ol_import
 from .config import DUMP_URL, KINDS, Settings
 
 
@@ -139,7 +139,7 @@ class JobRunner:
         try:
             self._dispatch(conn, job["kind"], {**params, "_job_id": job_id}, progress, cancelled)
         except (JobCancelled, ol_import.ImportCancelled, library.SyncCancelled, ingest.ScanCancelled,
-                importer.ImportCancelled):
+                importer.ImportCancelled, covers.CoversCancelled):
             status, message = "cancelled", "Cancelled"
         except Exception as exc:
             status, message = "failed", f"{type(exc).__name__}: {exc}"
@@ -189,6 +189,10 @@ class JobRunner:
                 # refresh what Tomearr knows: Calibre's new books, and the ingest folder without the imported files
                 self.submit("library_sync", {"after_import": True})
                 self.submit("ingest_scan", {"after_import": True})
+        elif kind == "fix_covers":
+            res = covers.fix_missing(conn, s, importer.target(conn), progress, cancelled, batch=params.get("_job_id"))
+            if res["fixed"]:
+                self.submit("library_sync", {"after_covers": True})
         elif kind == "library_sync":
             library.sync(conn, s.config_dir / "cache", progress, cancelled, rematch=params.get("rematch", False))
         else:

@@ -31,6 +31,7 @@ DEFAULTS = {
     "replace_formats": "MOBI,AZW,AZW3,PRC",   # removed from Calibre once the book has an EPUB
     "delete_duplicates": "1",                 # trash ingest files that are byte-identical to a Calibre file
     "import_auto": "0",                       # import ready files automatically after each scan
+    "fetch_covers": "1",                      # give coverless books the Open Library cover
 }
 SECRET = "calibre_password"
 NO_CONVERT = {"EPUB"}
@@ -298,6 +299,11 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
             shutil.copy2(src, epub)
         else:
             calibre_cli.convert(src, epub)
+    if setting(conn, "fetch_covers") == "1" and not calibre_cli.has_cover(epub):
+        from .covers import Fetcher
+        img = Fetcher(_config_dir(settings) / "cache" / "covers").for_work(conn, wk, meta.get("isbn"))
+        if img:
+            meta = {**meta, "cover": str(img)}
     calibre_cli.write_meta(epub, meta)
 
     removed, kept, cid, added_new = [], [], None, False
@@ -333,7 +339,9 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
     shutil.rmtree(stage, ignore_errors=True)
     return {"action": kind, "path": r["path"], "sha256": r["sha256"], "source_format": r["format"], "work_key": wk,
             "calibre_id": cid, "added_format": "EPUB", "removed_json": orjson.dumps(removed).decode(),
-            "trash_path": str(t), "meta_json": orjson.dumps({**meta, "kept_formats": kept}).decode()}
+            "trash_path": str(t),
+            "meta_json": orjson.dumps({**{k: v for k, v in meta.items() if k != "cover"}, "cover_added": "cover" in meta,
+                                       "kept_formats": kept}).decode()}
 
 
 def _convert_existing(conn, settings, cal: Calibre, it: dict, trash: Path) -> dict:
@@ -438,6 +446,8 @@ def undo(conn, import_id: int, settings=None) -> dict:
         raise KeyError(import_id)
     if r["status"] != "done":
         raise ImportError_(f"this import is {r['status']}, nothing to undo")
+    if r["action"] == "set_cover":
+        raise ImportError_("Calibre can't remove a cover from the command line; change it in Calibre or Calibre-Web")
     cal = Calibre(target(conn))
     a = r["action"]
     if a == "add":
@@ -472,7 +482,8 @@ def undo(conn, import_id: int, settings=None) -> dict:
 
 
 def undo_batch(conn, batch: int, settings=None) -> dict:
-    ids = [r[0] for r in conn.execute("SELECT id FROM imports WHERE batch=? AND status='done' ORDER BY id DESC", (batch,))]
+    ids = [r[0] for r in conn.execute("SELECT id FROM imports WHERE batch=? AND status='done' AND action != 'set_cover' "
+                                      "ORDER BY id DESC", (batch,))]
     out, errors = [], []
     for i in ids:
         try:
