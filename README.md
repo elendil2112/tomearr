@@ -30,7 +30,9 @@ The full phased plan lives in the project notes; in short:
 docker compose up -d --build
 ```
 
-Then open `http://<tower-ip>:8080`, go to **Catalog**, and click **Download & build catalog**.
+Then open `http://<tower-ip>:8222`. Port 8222 taken? Create a `.env` file next to `docker-compose.yml` containing
+`TOMEARR_PORT=<free port>` instead of editing the compose file; `.env` is git-ignored, so `git pull`
+stays clean. Then, go to **Catalog**, and click **Download & build catalog**.
 
 | Container path | Purpose |
 |---|---|
@@ -93,9 +95,9 @@ Imports show live progress as a percentage of the compressed file read; download
 # backend
 cd backend && pip install -r requirements.txt pytest
 python -m pytest
-TOMEARR_CONFIG=./config TOMEARR_DATA=./data uvicorn app.main:create_app --factory --port 8080
+TOMEARR_CONFIG=./config TOMEARR_DATA=./data uvicorn app.main:create_app --factory --port 8222
 
-# frontend (proxies /api to :8080)
+# frontend (proxies /api to :8222)
 cd frontend && npm install && npm run dev
 ```
 
