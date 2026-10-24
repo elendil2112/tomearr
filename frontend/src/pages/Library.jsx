@@ -142,6 +142,55 @@ function BookRow({ book, onChanged }) {
   );
 }
 
+function CoversCard() {
+  const [m, setM] = useState(null);
+  const [job, setJob] = useState(null);
+  const load = useCallback(() => api.coversMissing().then(setM).catch(() => {}), []);
+  useEffect(() => {
+    load();
+    api.jobs().then((js) => setJob(js.find((j) => j.kind === "fix_covers") || null)).catch(() => {});
+  }, [load]);
+  const running = job && ["queued", "running"].includes(job.status);
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(async () => {
+      const js = await api.jobs().catch(() => []);
+      const j = js.find((x) => x.id === job.id);
+      if (j) setJob(j);
+      if (j && !["queued", "running"].includes(j.status)) load();
+    }, 1500);
+    return () => clearInterval(t);
+  }, [running, job?.id, load]);
+  if (!m || (!m.missing && !job)) return null;
+  const start = async () => {
+    const { job_id } = await api.coversFix();
+    setJob({ id: job_id, kind: "fix_covers", status: "queued", progress: {} });
+  };
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Covers</h2>
+        <div className="actions">
+          <button className="primary" disabled={running || !m.fixable} onClick={start}>
+            Fetch {formatNumber(m.fixable)} cover{m.fixable === 1 ? "" : "s"}
+          </button>
+        </div>
+      </div>
+      <p className="muted small-print">
+        {formatNumber(m.missing)} book{m.missing === 1 ? "" : "s"} in Calibre {m.missing === 1 ? "has" : "have"} no cover;
+        Tomearr can try Open Library for {formatNumber(m.fixable)} of them (matched to a catalog work with a cover, or
+        with an ISBN). Only books without a cover are
+        touched. ISBN lookups are spaced out to respect Open Library's limits, so a big batch takes a while.
+      </p>
+      {job && (
+        <ul className="jobs">
+          <JobRow job={job} onCancel={(id) => api.cancel(id)} />
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function Library() {
   const [stats, setStats] = useState(null);
   const [filter, setFilter] = useState("all");
@@ -220,7 +269,7 @@ export default function Library() {
     <section>
       <h1>Library</h1>
       <p className="lede">
-        Your Calibre library, read without changing anything, and matched to the catalog.
+        Your Calibre library, matched to the catalog.
         {stats?.synced_at && ` Last synced ${stats.synced_at} UTC from ${stats.path}.`}
       </p>
       {error && <div className="notice error">{error}</div>}
@@ -267,6 +316,8 @@ export default function Library() {
           <p className="muted small-print">Changed and unmatched books are matched again on every sync. Manual matches are never changed.</p>
         )}
       </div>
+
+      <CoversCard />
 
       <div className="tabs" role="tablist">
         {FILTERS.map(([id, label, statKey]) => (

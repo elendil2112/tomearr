@@ -165,6 +165,11 @@ book or EPUB comes out of Calibre, replaced formats go back in, and the original
 - **Duplicates** of a file already in Calibre go to the trash (a setting).
 - **Books already in Calibre** that only have MOBI/AZW3/...: the second tab converts them to EPUB the same way.
 - **Import automatically** after each scan is a setting (off by default).
+- **Covers:** when an imported EPUB has no cover, the Open Library cover for its work (or its ISBN) is embedded
+  before it goes into Calibre. **Library → Covers** does the same for books already in Calibre that have none.
+  Only coverless books are touched. Covers by id come from the catalog; ISBN lookups are spaced ~3 s apart for
+  Open Library's rate limit, and results (including misses) are cached in `/config/cache/covers`. Calibre has no
+  command to remove a cover, so cover fixes can't be undone from Tomearr; change one in Calibre or Calibre-Web.
 
 **How Tomearr writes to Calibre.** By default it runs `calibredb --library-path /calibre` directly: no login, the
 same way Calibre-Web writes to the library. The Calibre desktop app keeps its own view in memory and shows books
@@ -216,6 +221,13 @@ The Docker image includes Calibre's official command-line build (`--build-arg CA
 | `GET /api/review/{id}/search?q=` | catalog search, as candidates for this file |
 | `POST /api/review/bulk` | `{"min_confidence": 80}` or `{"author_key": "OL…A"}`, `dry_run` (default true) |
 | `POST /api/review/undo` | undo the last decision or bulk action |
+| `POST /api/calibre/test` | check Tomearr can write to Calibre |
+| `GET /api/import/plan?library=` | dry run: what an import would do (`library=true`: convert books already in Calibre) |
+| `POST /api/import/run` | `{"keys": [...] or null, "library": false}` starts an import job |
+| `GET /api/import/history` | every import, with what was added, removed and trashed |
+| `POST /api/import/{id}/undo`, `POST /api/import/batch/{job}/undo` | undo one import or a whole run |
+| `POST /api/import/pdf/{file_id}` | `{"action": "convert"\|"approve"\|"reject"}`; preview at `/preview`, file at `/epub` |
+| `GET /api/covers/missing`, `POST /api/covers/fix` | coverless Calibre books / fetch their covers (job) |
 | `POST /api/catalog/{download,import,build,reindex}` | catalog jobs; import/build take `kinds`, `require_author`, `edition_languages`, `isbn_only` |
 
 ## Develop

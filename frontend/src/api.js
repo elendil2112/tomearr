@@ -66,6 +66,8 @@ export const api = {
   importUndoBatch: (batch) => post(`/api/import/batch/${batch}/undo`),
   pdf: (id, action) => post(`/api/import/pdf/${id}`, { action }),
   pdfPreview: (id) => request(`/api/import/pdf/${id}/preview`),
+  coversMissing: () => request("/api/covers/missing"),
+  coversFix: () => post("/api/covers/fix"),
   settings: () => request("/api/settings"),
   saveSettings: (body) =>
     request("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
