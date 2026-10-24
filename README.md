@@ -221,6 +221,13 @@ The Docker image includes Calibre's official command-line build (`--build-arg CA
 | `GET /api/review/{id}/search?q=` | catalog search, as candidates for this file |
 | `POST /api/review/bulk` | `{"min_confidence": 80}` or `{"author_key": "OL…A"}`, `dry_run` (default true) |
 | `POST /api/review/undo` | undo the last decision or bulk action |
+| `POST /api/calibre/test` | check Tomearr can write to Calibre |
+| `GET /api/import/plan?library=` | dry run: what an import would do (`library=true`: convert books already in Calibre) |
+| `POST /api/import/run` | `{"keys": [...] or null, "library": false}` starts an import job |
+| `GET /api/import/history` | every import, with what was added, removed and trashed |
+| `POST /api/import/{id}/undo`, `POST /api/import/batch/{job}/undo` | undo one import or a whole run |
+| `POST /api/import/pdf/{file_id}` | `{"action": "convert"\|"approve"\|"reject"}`; preview at `/preview`, file at `/epub` |
+| `GET /api/covers/missing`, `POST /api/covers/fix` | coverless Calibre books / fetch their covers (job) |
 | `POST /api/catalog/{download,import,build,reindex}` | catalog jobs; import/build take `kinds`, `require_author`, `edition_languages`, `isbn_only` |
 
 ## Develop
