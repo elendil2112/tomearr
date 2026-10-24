@@ -99,6 +99,16 @@ def sync(conn: sqlite3.Connection, cache_dir: Path, progress, cancelled, rematch
             conn.commit()
     conn.commit()
 
+    # Calibre's file list, for spotting ingest files that are byte-for-byte copies of books you already have.
+    # Hashes are kept when a file's size hasn't changed (they're computed lazily by the ingest scanner).
+    known = {(r[0], r[1]): (r[2], r[3]) for r in conn.execute("SELECT calibre_id, format, size, sha256 FROM calibre_files")}
+    conn.execute("DELETE FROM calibre_files")
+    conn.executemany(
+        "INSERT OR REPLACE INTO calibre_files(calibre_id, format, size, relpath, sha256) VALUES(?,?,?,?,?)",
+        [(bid, fmt, size, rel, known.get((bid, fmt), (None, None))[1] if known.get((bid, fmt), (None,))[0] == size
+          else None) for bid, fmt, size, rel in calibre.read_files(snap)])
+    conn.commit()
+
     gone = [cid for cid in prev if cid not in seen]
     for i in range(0, len(gone), 500):
         chunk = gone[i:i + 500]

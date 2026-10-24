@@ -19,7 +19,8 @@ The full phased plan lives in the project notes; in short:
 - [x] **Phase 2: catalog quality.** Editions and ISBNs, edition counts, ratings and reading-log popularity,
       popularity-aware ranking, language filter, ISBN lookup, work detail page.
 - [x] **Phase 3: library.** Read your Calibre library (read-only) and match it to catalog works.
-- [ ] **Phases 4–6: ingest.** Scan an ingest folder, match files, review queue, convert to EPUB with
+- [x] **Phase 4: ingest scanner.** Identify and match every file in a drop folder, on an interval. Report only.
+- [ ] **Phases 5–6: review and import.** Review queue, convert to EPUB with
       `ebook-convert`, add to Calibre with `calibredb`. Dry run by default, with an undo log. DRM is flagged,
       never stripped.
 - [ ] **Phases 7–10: the *arr part.** Monitored authors, wanted list, Prowlarr, download clients, automation.
@@ -39,6 +40,7 @@ stays clean. Then, go to **Catalog**, and click **Download & build catalog**.
 | `/config` | SQLite database (`tomearr.db`). Put this on cache/SSD. |
 | `/data` | Downloaded dump files in `/data/dumps`. |
 | `/calibre` | Your Calibre library (the folder containing `metadata.db`). Mount it read-only (`:ro`). |
+| `/ingest` | Drop folder for new and unsorted ebooks (read-only for now). Set `INGEST_FOLDER` in `.env` to change it. |
 
 Already have the dumps (the Open Library site offers torrents)? Put them in `/data/dumps` named
 `ol_dump_<kind>.txt.gz` (no date, e.g. `ol_dump_editions.txt.gz`), then click **Import only**.
@@ -89,6 +91,31 @@ compose file. Then check it under **Settings → Test connection**, then **Libra
   **Sync and rematch all**). Books deleted from Calibre disappear from Tomearr's list.
 - Search results, author pages and work pages show an **Owned** badge with the formats you have.
 
+## Ingest folder
+
+Tomearr scans the ingest folder on an interval (default every 5 minutes; **Settings**) and identifies every file.
+Nothing is moved or changed yet; that's the import step.
+
+- **Every format.** Files are identified by their contents, not just the extension. Embedded metadata is read from
+  EPUB/KEPUB, MOBI/AZW/AZW3/PRC, PDF (document info, XMP, and an ISBN found on the first pages), FB2 (also
+  zipped), DOCX/ODT, HTMLZ/TXTZ and Gutenberg-style TXT. Other formats (LIT, LRF, DJVU, CHM, RTF, DOC, KFX, ...)
+  are matched from the file name, and from Calibre's `ebook-meta` once that is in the image. A `metadata.opf`
+  next to a book is used too.
+- **File names.** Several readings are tried ("Author - Title", "Title - Author", "Title (Author)",
+  "Author/Title/" folders, release tags and site names stripped) and the one that matches the catalog best wins.
+- **Buckets:** Matched (90%+), Review (60–89%), Unmatched, Duplicates, DRM, Archives, Comics, Errors.
+- **Duplicates** are found by SHA-256, within the folder and against your Calibre library (only Calibre files of
+  the same size are hashed). Matched books you already own show which formats Calibre has.
+- **DRM** (Adobe ADEPT, Apple FairPlay, Kindle/Mobipocket, KFX, password-protected PDFs) is detected and flagged.
+  Tomearr never removes DRM. Font obfuscation in EPUBs is not DRM and isn't flagged.
+- **Interval scans are cheap:** only new or changed files (size or modified time) are read. Files modified in the
+  last 2 minutes are skipped until the next scan, since they're probably still downloading or copying, and so are
+  partial downloads (`.part`, `.!qB`, ...). Each file is read in a worker process with a time limit, so one broken
+  file can't stall a scan. Polling is used rather than file-change notifications, which don't reliably reach a
+  container from Unraid user shares.
+- **Re-match all** re-runs matching without re-reading files (after a catalog update, say); **Full rescan** re-reads
+  everything.
+
 ## How search works
 
 - Authors and works are loaded from the dumps. Works with no author are skipped by default (toggle on the Catalog page).
@@ -113,12 +140,16 @@ compose file. Then check it under **Settings → Test connection**, then **Libra
 | `GET /api/isbn/{isbn}` | editions and works for an ISBN |
 | `GET /api/works/{key}` | work detail with editions, ISBNs, ratings, reader counts |
 | `GET /api/authors/{key}` | author with works |
-| `GET/PUT /api/settings` | `{"language": "eng", "calibre_path": "/calibre"}` |
+| `GET/PUT /api/settings` | `language`, `calibre_path`, `ingest_path`, `ingest_interval_min`, `ingest_settle_sec`, `library_sync_interval_min` |
 | `POST /api/library/test` | check a Calibre folder (`{"path": ...}`, defaults to the setting) |
 | `POST /api/library/sync` | sync job (`{"rematch": true}` re-matches everything except manual matches) |
 | `GET /api/library?q=&filter=&offset=&limit=` | owned books; `filter`: all, matched, unmatched, low, not_epub, issues, manual |
 | `GET /api/library/stats` | counts by match method and format |
 | `PUT/DELETE /api/library/{calibre_id}/match` | set a manual match (`{"work_key": "OL…W"}` or `null`) / clear it |
+| `POST /api/ingest/test` | check the ingest folder (`{"path": ...}`) |
+| `POST /api/ingest/scan` | scan job (`{"full": true}` re-reads every file, `{"rematch": true}` re-matches) |
+| `GET /api/ingest?bucket=&q=&offset=&limit=` | scanned files with metadata, match, candidates |
+| `GET /api/ingest/stats` | bucket and format counts, last scan summary |
 | `POST /api/catalog/{download,import,build,reindex}` | catalog jobs; import/build take `kinds`, `require_author`, `edition_languages`, `isbn_only` |
 
 ## Develop
@@ -136,9 +167,9 @@ cd frontend && npm install && npm run dev
 ## Layout
 
 ```
-backend/app/    FastAPI app, job runner, dump importer, search, Calibre reader, matcher
+backend/app/    FastAPI app, job runner, scheduler, dump importer, search, Calibre reader, matcher, ingest scanner
 backend/tests/  pytest suite using small synthetic dumps
-frontend/src/   React UI (Search, Author, Work, Library, Catalog, Settings pages)
+frontend/src/   React UI (Search, Author, Work, Library, Ingest, Catalog, Settings pages)
 Dockerfile      builds the UI, then a slim Python runtime
 ```
 

@@ -45,6 +45,11 @@ export const api = {
       body: JSON.stringify({ work_key: workKey }),
     }),
   clearMatch: (id) => request(`/api/library/${id}/match`, { method: "DELETE" }),
+  ingest: ({ bucket = "all", q = "", offset = 0, limit = 200 } = {}) =>
+    request(`/api/ingest?bucket=${bucket}&q=${encodeURIComponent(q)}&offset=${offset}&limit=${limit}`),
+  ingestStats: () => request("/api/ingest/stats"),
+  ingestScan: (opts = {}) => post("/api/ingest/scan", opts),
+  ingestTest: (path) => post("/api/ingest/test", { path }),
   settings: () => request("/api/settings"),
   saveSettings: (body) =>
     request("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),

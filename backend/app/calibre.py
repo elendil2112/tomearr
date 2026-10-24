@@ -147,3 +147,17 @@ def read_books(snapshot_path: Path):
             }
     finally:
         c.close()
+
+
+def read_files(snapshot_path: Path):
+    """Yield (book_id, FORMAT, size, path relative to the library) for every file Calibre tracks."""
+    c = _open(snapshot_path)
+    try:
+        if "path" not in {r[1] for r in c.execute("PRAGMA table_info(books)")}:
+            return
+        for bid, fmt, size, name, bpath in c.execute(
+                "SELECT d.book, d.format, d.uncompressed_size, d.name, b.path FROM data d JOIN books b ON b.id = d.book"):
+            if bpath and name and fmt:
+                yield bid, fmt.upper(), size, f"{bpath}/{name}.{fmt.lower()}"
+    finally:
+        c.close()
