@@ -5,6 +5,7 @@ import Author from "./pages/Author.jsx";
 import Work from "./pages/Work.jsx";
 import Library from "./pages/Library.jsx";
 import Settings from "./pages/Settings.jsx";
+import Ingest from "./pages/Ingest.jsx";
 
 function useHashRoute() {
   const read = () => window.location.hash.replace(/^#\/?/, "") || "search";
@@ -20,6 +21,7 @@ function useHashRoute() {
 const NAV = [
   { id: "search", label: "Search" },
   { id: "library", label: "Library" },
+  { id: "ingest", label: "Ingest" },
   { id: "catalog", label: "Catalog" },
   { id: "settings", label: "Settings" },
 ];
@@ -53,7 +55,8 @@ export default function App() {
         {page === "work" && <Work olKey={arg} />}
         {page === "library" && <Library />}
         {page === "settings" && <Settings />}
-        {!["catalog", "author", "work", "library", "settings"].includes(page) && <Search />}
+        {page === "ingest" && <Ingest />}
+        {!["catalog", "author", "work", "library", "settings", "ingest"].includes(page) && <Search />}
       </main>
     </div>
   );

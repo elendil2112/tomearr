@@ -220,3 +220,17 @@ fieldset.lite legend { font-weight: 600; font-size: 0.9rem; padding: 0 6px; }
 .field select { max-width: 320px; }
 .issue { font-size: 0.78rem; color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, var(--card));
   padding: 1px 8px; border-radius: 999px; }
+.ing-file { padding: 10px 4px; }
+.ing-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ing-path { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.ing-size { margin-left: auto; white-space: nowrap; }
+.ing-details { margin: 8px 0 2px; padding: 10px 12px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; font-size: 0.88rem; }
+.ing-details p { margin: 0 0 6px; }
+.cands { margin: 4px 0 8px; padding-left: 18px; }
+.issue.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--card)); }
+.inline-field { display: flex; gap: 8px; align-items: center; }
+.inline-field input { max-width: 120px; }
+.inline-field button { font: inherit; padding: 8px 14px; border-radius: 9px; border: 1px solid var(--line);
+  background: var(--card); color: var(--ink); cursor: pointer; }
+.inline-field button:disabled { opacity: 0.45; cursor: not-allowed; }
