@@ -20,7 +20,8 @@ The full phased plan lives in the project notes; in short:
       popularity-aware ranking, language filter, ISBN lookup, work detail page.
 - [x] **Phase 3: library.** Read your Calibre library (read-only) and match it to catalog works.
 - [x] **Phase 4: ingest scanner.** Identify and match every file in a drop folder, on an interval. Report only.
-- [ ] **Phases 5–6: review and import.** Review queue, convert to EPUB with
+- [x] **Phase 5: review.** Keyboard-driven review of everything the matcher wasn't sure about.
+- [ ] **Phase 6: import.** Convert to EPUB with
       `ebook-convert`, add to Calibre with `calibredb`. Dry run by default, with an undo log. DRM is flagged,
       never stripped.
 - [ ] **Phases 7–10: the *arr part.** Monitored authors, wanted list, Prowlarr, download clients, automation.
@@ -116,6 +117,34 @@ Nothing is moved or changed yet; that's the import step.
 - **Re-match all** re-runs matching without re-reading files (after a catalog update, say); **Full rescan** re-reads
   everything.
 
+## Review
+
+**Review** walks through the files the matcher wasn't sure about (the Review and Unmatched buckets), one at a
+time, most promising first. For each file it shows what's known about it (and where that came from: the file,
+a metadata.opf, the file name, or your edits) next to the candidate works, with covers, authors, year, editions,
+whether you already own it, a score, and why: "ISBN … is an edition of this book", "title 100% similar", "same
+author".
+
+| Key | |
+|---|---|
+| Enter / A | accept the highlighted match |
+| ↑ ↓ / J K | move between matches |
+| 1 – 9 | accept that match |
+| N | not a book |
+| S | skip for now (it moves to Skipped) |
+| E | edit the details (title, authors, series, ISBN, language); Enter finds matches for them |
+| / | search the catalog; Enter searches, Enter again accepts |
+| U | undo (a bulk action undoes as one) |
+| ← → | previous / next file |
+| ? | show the keys |
+
+- **Bulk:** accept every match at N% or better, or every match to the current candidate's author. Both show how
+  many files they'll touch first, and one **U** undoes them.
+- Decisions are stored apart from the automatic match, so rescans and re-matching never overwrite them. If a
+  file's contents change, its decision is cleared.
+- Your edits are saved with the decision; the import step will write them into Calibre.
+- **Ready to import** = files you accepted plus confident automatic matches you didn't overrule.
+
 ## How search works
 
 - Authors and works are loaded from the dumps. Works with no author are skipped by default (toggle on the Catalog page).
@@ -149,7 +178,14 @@ Nothing is moved or changed yet; that's the import step.
 | `POST /api/ingest/test` | check the ingest folder (`{"path": ...}`) |
 | `POST /api/ingest/scan` | scan job (`{"full": true}` re-reads every file, `{"rematch": true}` re-matches) |
 | `GET /api/ingest?bucket=&q=&offset=&limit=` | scanned files with metadata, match, candidates |
-| `GET /api/ingest/stats` | bucket and format counts, last scan summary |
+| `GET /api/ingest/stats` | bucket and format counts, review queue, ready to import, last scan summary |
+| `GET /api/review/queue?which=` | file ids: `queue` (default), `skipped`, `accepted`, `not_book`, `matched` |
+| `GET /api/review/{id}` | a file with its best reading and candidates (with reasons) |
+| `POST /api/review/{id}/decide` | `{"action": "accept"\|"not_book"\|"skip"\|"reset", "work_key": ..., "overrides": {...}}` |
+| `POST /api/review/{id}/rematch` | candidates for edited details (`title`, `authors`, `isbn`) |
+| `GET /api/review/{id}/search?q=` | catalog search, as candidates for this file |
+| `POST /api/review/bulk` | `{"min_confidence": 80}` or `{"author_key": "OL…A"}`, `dry_run` (default true) |
+| `POST /api/review/undo` | undo the last decision or bulk action |
 | `POST /api/catalog/{download,import,build,reindex}` | catalog jobs; import/build take `kinds`, `require_author`, `edition_languages`, `isbn_only` |
 
 ## Develop
@@ -169,7 +205,7 @@ cd frontend && npm install && npm run dev
 ```
 backend/app/    FastAPI app, job runner, scheduler, dump importer, search, Calibre reader, matcher, ingest scanner
 backend/tests/  pytest suite using small synthetic dumps
-frontend/src/   React UI (Search, Author, Work, Library, Ingest, Catalog, Settings pages)
+frontend/src/   React UI (Search, Author, Work, Library, Ingest, Review, Catalog, Settings pages)
 Dockerfile      builds the UI, then a slim Python runtime
 ```
 

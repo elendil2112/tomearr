@@ -234,3 +234,55 @@ fieldset.lite legend { font-weight: 600; font-size: 0.9rem; padding: 0 6px; }
 .inline-field button { font: inherit; padding: 8px 14px; border-radius: 9px; border: 1px solid var(--line);
   background: var(--card); color: var(--ink); cursor: pointer; }
 .inline-field button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* --- Phase 5: review ------------------------------------------------------ */
+.rv-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.rv-progress { color: var(--ink); font-variant-numeric: tabular-nums; display: flex; gap: 6px; align-items: baseline; }
+.rv-help { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 6px 18px; font-size: 0.9rem; }
+kbd { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; background: var(--card); color: var(--muted); }
+.actions button kbd { margin-left: 4px; }
+.actions button.primary kbd { background: transparent; color: inherit; border-color: color-mix(in srgb, var(--accent-ink) 40%, transparent); }
+.rv-bulk { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 0.9rem; margin: 6px 0 14px; color: var(--muted); }
+.rv-bulk input { width: 64px; font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--card); color: var(--ink); }
+.rv-bulk button { font: inherit; font-size: 0.85rem; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--card); color: var(--ink); cursor: pointer; }
+.rv-bulk button:disabled { opacity: 0.45; cursor: not-allowed; }
+.rv-card { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 16px; align-items: start; }
+.rv-file { position: sticky; top: 72px; }
+.rv-path { overflow-wrap: anywhere; margin-bottom: 4px; }
+.rv-fields { margin-top: 14px; display: grid; gap: 6px; }
+.rv-field { display: grid; grid-template-columns: 74px 1fr auto; gap: 8px; align-items: baseline; font-size: 0.92rem; }
+.rv-label { color: var(--muted); font-size: 0.8rem; }
+.rv-src { font-size: 0.68rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+.rv-edit { margin-top: 10px; }
+.rv-edit .field input { max-width: none; width: 100%; }
+.rv-search .search { margin-bottom: 10px; }
+.rv-cands { list-style: none; margin: 0; padding: 0; }
+.rv-cand { display: flex; gap: 12px; align-items: center; padding: 10px; border-radius: 10px; cursor: pointer;
+  border: 2px solid transparent; }
+.rv-cand:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.rv-cand.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+.rv-num { width: 14px; color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; flex: none; }
+.rv-cand-body { flex: 1; min-width: 0; }
+.rv-why { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.rv-why span { font-size: 0.72rem; color: var(--muted); background: var(--line); border-radius: 999px; padding: 1px 7px; }
+.rv-why span.good { color: var(--ok); background: color-mix(in srgb, var(--ok) 15%, var(--card)); }
+.rv-score { font-weight: 700; font-variant-numeric: tabular-nums; flex: none; }
+.rv-score.hi { color: var(--ok); }
+.rv-score.mid { color: var(--warn); }
+.rv-score.lo { color: var(--muted); }
+.rv-actions { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 10px; }
+.rv-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--paper);
+  padding: 8px 16px; border-radius: 999px; font-size: 0.9rem; z-index: 10; box-shadow: 0 4px 16px rgb(0 0 0 / 0.2); }
+.rv-empty h2 { margin-bottom: 4px; }
+.rv-cta { display: block; color: var(--ink); }
+.rv-cta:hover { text-decoration: none; border-color: var(--accent); }
+.decision { font-size: 0.74rem; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--line); color: var(--muted); }
+.decision.d-accepted { background: color-mix(in srgb, var(--ok) 16%, var(--card)); color: var(--ok); }
+@media (max-width: 760px) {
+  .rv-card { grid-template-columns: 1fr; }
+  .rv-file { position: static; }
+}
+.rv-fields .link { justify-self: start; }

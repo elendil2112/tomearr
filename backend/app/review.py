@@ -94,7 +94,7 @@ def enrich(conn, keys: list[str], rd: dict, scores: dict[str, float] | None = No
         elif not authors:
             why.append("no author to compare")
         if w.get("edition_count"):
-            why.append(f"{w['edition_count']} editions")
+            why.append(f"{w['edition_count']} edition{'' if w['edition_count'] == 1 else 's'}")
         sc = (scores or {}).get(w["ol_key"])
         if sc is None:
             sc = 98.0 if isbn_hit else (matcher.score(title, authors, w) if title else 0.0)

@@ -50,6 +50,14 @@ export const api = {
   ingestStats: () => request("/api/ingest/stats"),
   ingestScan: (opts = {}) => post("/api/ingest/scan", opts),
   ingestTest: (path) => post("/api/ingest/test", { path }),
+  reviewQueue: (which = "queue") => request(`/api/review/queue?which=${which}`),
+  reviewFile: (id) => request(`/api/review/${id}`),
+  decide: (id, action, workKey, overrides) =>
+    post(`/api/review/${id}/decide`, { action, work_key: workKey || null, overrides: overrides || null }),
+  rematch: (id, body) => post(`/api/review/${id}/rematch`, body),
+  reviewSearch: (id, q) => request(`/api/review/${id}/search?q=${encodeURIComponent(q)}`),
+  undo: () => post("/api/review/undo"),
+  bulk: (body) => post("/api/review/bulk", body),
   settings: () => request("/api/settings"),
   saveSettings: (body) =>
     request("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
