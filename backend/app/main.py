@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, ingest, isbn, library, search
+from . import db, ingest, isbn, library, review, search
 from .scheduler import Scheduler
 from .config import KINDS, get_settings
 from .jobs import JobRunner
@@ -32,6 +32,24 @@ class SettingsBody(BaseModel):
     ingest_interval_min: float | None = None
     ingest_settle_sec: int | None = None
     library_sync_interval_min: float | None = None
+
+
+class DecideBody(BaseModel):
+    action: str                         # accept | not_book | skip | reset
+    work_key: str | None = None
+    overrides: dict | None = None       # title, authors, series, series_index, isbn, language
+
+
+class RematchBody(BaseModel):
+    title: str = ""
+    authors: list[str] | str = []
+    isbn: str | None = None
+
+
+class BulkBody(BaseModel):
+    min_confidence: int | None = None
+    author_key: str | None = None
+    dry_run: bool = True
 
 
 class ScanRequest(BaseModel):
@@ -342,14 +360,59 @@ def create_app() -> FastAPI:
 
     @app.get("/api/ingest")
     def ingest_list(bucket: str = "all", q: str = "", offset: int = Query(0, ge=0),
-                    limit: int = Query(100, ge=1, le=500)):
+                    limit: int = Query(100, ge=1, le=500), decision: str | None = None):
         if bucket != "all" and bucket not in ingest.BUCKETS:
             raise HTTPException(400, "unknown bucket")
+        if decision is not None and decision not in ingest.DECISION_FILTERS:
+            raise HTTPException(400, "unknown decision filter")
         conn = conn_()
         try:
-            return ingest.list_files(conn, bucket, q, offset, limit)
+            return ingest.list_files(conn, bucket, q, offset, limit, decision)
         finally:
             conn.close()
+
+    # --- review (Phase 5) ----------------------------------------------------
+    def reviewing(fn):
+        conn = conn_()
+        try:
+            return fn(conn)
+        except KeyError:
+            raise HTTPException(404, "file not found")
+        except review.ReviewError as exc:
+            raise HTTPException(400, str(exc))
+        finally:
+            conn.close()
+
+    @app.get("/api/review/queue")
+    def review_queue(which: str = "queue"):
+        return reviewing(lambda c: review.queue(c, which))
+
+    @app.get("/api/review/{file_id}")
+    def review_detail(file_id: int):
+        return reviewing(lambda c: review.detail(c, file_id))
+
+    @app.post("/api/review/{file_id}/decide")
+    def review_decide(file_id: int, body: DecideBody):
+        return reviewing(lambda c: review.decide(c, file_id, body.action, body.work_key, body.overrides))
+
+    @app.post("/api/review/{file_id}/rematch")
+    def review_rematch(file_id: int, body: RematchBody):
+        return reviewing(lambda c: review.rematch(c, file_id, body.title, body.authors, body.isbn))
+
+    @app.get("/api/review/{file_id}/search")
+    def review_search(file_id: int, q: str = ""):
+        return reviewing(lambda c: review.search_catalog(c, file_id, q))
+
+    @app.post("/api/review/undo")
+    def review_undo():
+        r = reviewing(review.undo)
+        if r is None:
+            raise HTTPException(404, "nothing to undo")
+        return r
+
+    @app.post("/api/review/bulk")
+    def review_bulk(body: BulkBody):
+        return reviewing(lambda c: review.bulk_accept(c, body.min_confidence, body.author_key, body.dry_run))
 
     # --- frontend ---------------------------------------------------------
     static = settings.static_dir
