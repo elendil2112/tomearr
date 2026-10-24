@@ -3,6 +3,7 @@
 Order of evidence: Open Library id > ISBN > title plus author. Confidence is 0-100. Phase 4's ingest matcher
 reuses this for files, so keep it independent of where the book came from.
 """
+import functools
 import math
 import re
 import unicodedata
@@ -36,6 +37,7 @@ def fold(s: str | None) -> str:
 _VOLUME = re.compile(r"\b(vol|volume|book|bk|part|no)\.?\s*-?\s*\d+\b")
 
 
+@functools.lru_cache(maxsize=200_000)
 def norm_title(s: str | None) -> str:
     s = _VOLUME.sub(" ", _NOISE.sub(" ", _PARENS.sub(" ", fold(s))))
     s = re.sub(r"[^\w\s]", " ", s.replace("&", " and "))
@@ -56,6 +58,7 @@ _HONORIFIC = {"jr", "sr", "ii", "iii", "iv", "phd", "md", "dr", "mr", "mrs", "ms
 _JUNK_NAMES = {"unknown", "anonymous", "anon", "various", "various authors", "n a", "none", "author"}
 
 
+@functools.lru_cache(maxsize=200_000)
 def clean_author(name: str | None) -> str:
     """Make one author string readable: Calibre's '|' (an escaped comma), roles, quotes, stray punctuation.
 
@@ -78,10 +81,11 @@ def split_authors(raw: str | None) -> list[str]:
     return list(dict.fromkeys(c for c in (clean_author(p) for p in parts) if c))
 
 
-def name_tokens(name: str | None) -> list[str]:
+@functools.lru_cache(maxsize=200_000)
+def name_tokens(name: str | None) -> tuple[str, ...]:
     n = fold(clean_author(name))
     toks = re.findall(r"[a-z0-9]+", n.replace(".", " "))
-    return [t for t in toks if t not in _HONORIFIC] or toks
+    return tuple(t for t in toks if t not in _HONORIFIC) or tuple(toks)
 
 
 def author_similarity(a: str, b: str) -> float:
@@ -100,7 +104,12 @@ def author_similarity(a: str, b: str) -> float:
 _SEGMENTS = re.compile(r"\s*(?::|;|\s[-–—]+\s|-\s|\s-)\s*")
 
 
-def title_variants(book_title: str, authors: list[str] = ()) -> list[str]:
+def title_variants(book_title: str, authors: list[str] | tuple = ()) -> list[str]:
+    return list(_title_variants(book_title, tuple(authors)))
+
+
+@functools.lru_cache(maxsize=20_000)
+def _title_variants(book_title: str, authors: tuple) -> tuple:
     """Normalized ways to read a messy file/Calibre title.
 
     'The History of Middle-earth Vol-11- The War of the Jewels J.R.R Tolkien' yields the whole thing, its
@@ -124,7 +133,7 @@ def title_variants(book_title: str, authors: list[str] = ()) -> list[str]:
                 w.pop(0)
             if len(w) < len(words):
                 out.append(_ARTICLE.sub("", " ".join(w)))
-    return list(dict.fromkeys(out))
+    return tuple(dict.fromkeys(out))
 
 
 def title_similarity(book_title: str, work: dict, authors: list[str] = ()) -> float:
@@ -235,7 +244,7 @@ def _edition_title_match(conn, title: str, authors: list[str]) -> dict | None:
     return w
 
 
-def _text_match(conn, title: str, authors: list[str]) -> list[dict]:
+def _text_match(conn, title: str, authors: list[str], deep: bool = True) -> list[dict]:
     """Candidates by title and author, best first, each with a 'score'."""
     surname = name_tokens(authors[0])[-1] if authors and name_tokens(authors[0]) else ""
     words = norm_title(main_title(title)).split()
@@ -259,7 +268,7 @@ def _text_match(conn, title: str, authors: list[str]) -> list[dict]:
         if seen and max(w["score"] for w in seen.values()) >= 95:
             break
     cands = sorted(seen.values(), key=lambda w: w["score"], reverse=True)
-    if not cands or cands[0]["score"] < 90:
+    if deep and (not cands or cands[0]["score"] < 90):
         ed = _edition_title_match(conn, title, authors)
         if ed and (not cands or ed["score"] > cands[0]["score"]):
             ed["via_edition"] = True
@@ -267,7 +276,9 @@ def _text_match(conn, title: str, authors: list[str]) -> list[dict]:
     return cands
 
 
-def match_book(conn, title: str, authors: list[str], isbn: str | None = None, ol_id: str | None = None) -> Match:
+def match_book(conn, title: str, authors: list[str], isbn: str | None = None, ol_id: str | None = None,
+               deep: bool = True) -> Match:
+    """deep=False skips the slow edition-title fallback (for callers that try several readings of one book)."""
     authors = [c for c in (clean_author(a) for a in authors) if c]
     if ol_id:
         key = _by_ol_id(conn, ol_id)
@@ -295,7 +306,7 @@ def match_book(conn, title: str, authors: list[str], isbn: str | None = None, ol
     issues = ["isbn_mismatch"] if isbn_cands else []
     if not title or not search.has_index(conn):
         return Match(None, None, 0, isbn_cands, issues)
-    cands = _text_match(conn, title, authors)
+    cands = _text_match(conn, title, authors, deep)
     if not cands:
         return Match(None, None, 0, isbn_cands, issues)
     best = cands[0]

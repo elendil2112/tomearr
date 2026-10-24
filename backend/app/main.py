@@ -7,7 +7,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, isbn, library, search
+from . import db, ingest, isbn, library, search
+from .scheduler import Scheduler
 from .config import KINDS, get_settings
 from .jobs import JobRunner
 
@@ -27,6 +28,15 @@ class ImportRequest(BaseModel):
 class SettingsBody(BaseModel):
     language: str | None = None
     calibre_path: str | None = None
+    ingest_path: str | None = None
+    ingest_interval_min: float | None = None
+    ingest_settle_sec: int | None = None
+    library_sync_interval_min: float | None = None
+
+
+class ScanRequest(BaseModel):
+    full: bool = False      # re-read every file, not just new/changed ones
+    rematch: bool = False   # re-run matching for unchanged files (after a catalog or library update)
 
 
 class LibraryTest(BaseModel):
@@ -42,7 +52,9 @@ class MatchBody(BaseModel):
 
 
 LANG_RE = re.compile(r"^(all|[a-z]{3})$")
-DEFAULT_SETTINGS = {"language": "eng", "calibre_path": library.DEFAULT_CALIBRE_PATH}
+DEFAULT_SETTINGS = {"language": "eng", "calibre_path": library.DEFAULT_CALIBRE_PATH, **ingest.DEFAULTS}
+NUMERIC_SETTINGS = {"ingest_interval_min": (0, 1440), "ingest_settle_sec": (0, 86400),
+                    "library_sync_interval_min": (0, 10080)}
 
 
 class DownloadRequest(BaseModel):
@@ -58,6 +70,7 @@ def create_app() -> FastAPI:
     """Build the app. Run with: uvicorn app.main:create_app --factory"""
     settings = get_settings()
     runner = JobRunner(settings)
+    scheduler = Scheduler(settings, runner)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -65,7 +78,9 @@ def create_app() -> FastAPI:
         db.init(conn)
         conn.close()
         runner.start()
+        scheduler.start()
         yield
+        scheduler.stop()
         runner.stop()
 
     app = FastAPI(title="Tomearr", lifespan=lifespan)
@@ -154,7 +169,10 @@ def create_app() -> FastAPI:
             conn.close()
 
     def get_settings_(conn) -> dict:
-        return {k: db.get_meta(conn, f"setting_{k}", v) for k, v in DEFAULT_SETTINGS.items()}
+        out = {k: db.get_meta(conn, f"setting_{k}", v) for k, v in DEFAULT_SETTINGS.items()}
+        for k in NUMERIC_SETTINGS:
+            out[k] = float(out[k]) if "." in str(out[k]) else int(out[k])
+        return out
 
     @app.get("/api/settings")
     def api_get_settings():
@@ -178,6 +196,17 @@ def create_app() -> FastAPI:
                 if not p.startswith("/"):
                     raise HTTPException(400, "Calibre path must be an absolute path inside the container, e.g. /calibre")
                 db.set_meta(conn, "setting_calibre_path", p)
+            if body.ingest_path is not None:
+                p = body.ingest_path.strip().rstrip("/") or "/"
+                if not p.startswith("/"):
+                    raise HTTPException(400, "Ingest path must be an absolute path inside the container, e.g. /ingest")
+                db.set_meta(conn, "setting_ingest_path", p)
+            for k, (lo, hi) in NUMERIC_SETTINGS.items():
+                v = getattr(body, k)
+                if v is not None:
+                    if not lo <= v <= hi:
+                        raise HTTPException(400, f"{k} must be between {lo} and {hi}")
+                    db.set_meta(conn, f"setting_{k}", int(v) if float(v).is_integer() else v)
             return get_settings_(conn)
         finally:
             conn.close()
@@ -286,6 +315,39 @@ def create_app() -> FastAPI:
             if not library.clear_manual(conn, calibre_id):
                 raise HTTPException(404, "book not in library")
             return {"ok": True}
+        finally:
+            conn.close()
+
+    # --- ingest (Phase 4: report only, nothing moves) -------------------------
+    @app.post("/api/ingest/test")
+    def ingest_test(body: LibraryTest):
+        conn = conn_()
+        try:
+            path = (body.path or "").strip() or ingest.setting(conn, "ingest_path")
+        finally:
+            conn.close()
+        return ingest.test_folder(path)
+
+    @app.post("/api/ingest/scan")
+    def ingest_scan(body: ScanRequest):
+        return {"job_id": runner.submit("ingest_scan", {"full": body.full, "rematch": body.rematch})}
+
+    @app.get("/api/ingest/stats")
+    def ingest_stats():
+        conn = conn_()
+        try:
+            return ingest.stats(conn)
+        finally:
+            conn.close()
+
+    @app.get("/api/ingest")
+    def ingest_list(bucket: str = "all", q: str = "", offset: int = Query(0, ge=0),
+                    limit: int = Query(100, ge=1, le=500)):
+        if bucket != "all" and bucket not in ingest.BUCKETS:
+            raise HTTPException(400, "unknown bucket")
+        conn = conn_()
+        try:
+            return ingest.list_files(conn, bucket, q, offset, limit)
         finally:
             conn.close()
 

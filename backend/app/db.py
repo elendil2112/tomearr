@@ -135,7 +135,47 @@ def _migrate_4(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE library_books ADD COLUMN issues TEXT")
 
 
-MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4]  # MIGRATIONS[i] upgrades version i+1 to i+2
+def _migrate_5(conn: sqlite3.Connection) -> None:
+    """Phase 4: files found in the ingest folder, and Calibre's files (for duplicate detection)."""
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS ingest_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path TEXT NOT NULL UNIQUE,         -- relative to the ingest folder
+        size INTEGER, mtime_ns INTEGER, sha256 TEXT,
+        kind TEXT,                         -- ebook | archive | comic
+        format TEXT,                       -- from the file's contents: EPUB, MOBI, AZW3, PDF, ...
+        drm INTEGER, drm_detail TEXT,
+        meta_json TEXT, meta_source TEXT,  -- what the file says about itself
+        sidecar_json TEXT,                 -- metadata.opf / <name>.opf next to it
+        entries_json TEXT,                 -- for archives: ebook files inside
+        error TEXT,
+        title TEXT, authors TEXT, isbn TEXT,           -- the reading that matched best
+        match_source TEXT,                 -- embedded | sidecar | filename:<how>
+        work_key TEXT, match_method TEXT, match_confidence INTEGER NOT NULL DEFAULT 0,
+        candidates_json TEXT, issues TEXT,
+        bucket TEXT,                       -- matched | review | unmatched | duplicate | drm | archive | comic | error
+        duplicate_of TEXT,                 -- 'ingest:<path>' or 'calibre:<book id>'
+        owned_formats TEXT,                -- formats already in Calibre for the matched work
+        first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+        scanned_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_ingest_bucket ON ingest_files(bucket);
+    CREATE INDEX IF NOT EXISTS idx_ingest_sha ON ingest_files(sha256);
+    CREATE INDEX IF NOT EXISTS idx_ingest_work ON ingest_files(work_key);
+
+    CREATE TABLE IF NOT EXISTS calibre_files (
+        calibre_id INTEGER NOT NULL,
+        format TEXT NOT NULL,
+        size INTEGER,
+        relpath TEXT,                      -- relative to the Calibre library folder
+        sha256 TEXT,                       -- filled in lazily, only when an ingest file has the same size
+        PRIMARY KEY (calibre_id, format)
+    );
+    CREATE INDEX IF NOT EXISTS idx_calibre_files_size ON calibre_files(size);
+    """)
+
+
+MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5]  # MIGRATIONS[i] upgrades version i+1 to i+2
 SCHEMA_VERSION = 1 + len(MIGRATIONS)
 
 
