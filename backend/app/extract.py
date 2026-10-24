@@ -37,7 +37,8 @@ COMIC_EXTS = {"cbz", "cbr", "cb7", "cbt"}
 ARCHIVE_EXTS = {"zip", "rar", "7z", "tar", "gz", "tgz"}
 PARTIAL_EXTS = {"part", "!qb", "crdownload", "tmp", "download", "partial", "aria2"}
 SIDE_EXTS = {"opf"}
-MIN_TXT_SIZE = 20_000              # smaller .txt files are almost always readmes and release notes
+MIN_TXT_SIZE = 20_000
+EBOOK_META_FORMATS = {"LIT", "LRF", "DJVU", "CHM", "RTF", "DOC", "PDB", "SNB", "TCR", "RB", "AZW4", "KFX"}              # smaller .txt files are almost always readmes and release notes
 
 JUNK_TITLE = re.compile(
     r"^(untitled|unknown|document\d*|microsoft word.*|title|book|ebook|cover|\d+|.*\.(docx?|pdf|indd|tex|qxd|"
@@ -390,6 +391,9 @@ def ebook_meta(path: Path, timeout: int = 60) -> dict | None:
         if sep:
             f[k.strip().lower()] = v.strip()
     authors = re.sub(r"\s*\[[^\]]*\]", "", f.get("author(s)", ""))
+    # Calibre falls back to the file name for a missing title; that's a guess, not the book's own metadata.
+    if f.get("title", "").strip().lower() == path.stem.strip().lower():
+        f["title"] = ""
     isbns = re.findall(r"isbn:([0-9Xx\-]+)", f.get("identifiers", ""))
     series = re.match(r"(.+?)\s*#([\d.]+)", f.get("series", ""))
     m = _meta(f.get("title"), [a for a in authors.split("&")], isbns, language=f.get("languages"),
@@ -532,7 +536,8 @@ def analyze(path: str | Path) -> dict:
             out["drm"] = False
         if ext in COMIC_EXTS:
             out["kind"] = "comic"
-        if out["kind"] == "ebook" and _empty(meta):
+        # Calibre's ebook-meta only for formats Tomearr can't read itself (it's slow to start).
+        if out["kind"] == "ebook" and _empty(meta) and fmt in EBOOK_META_FORMATS:
             em = ebook_meta(p)
             if em:
                 meta, out["meta_source"] = em, "ebook-meta"

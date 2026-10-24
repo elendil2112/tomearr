@@ -21,9 +21,7 @@ The full phased plan lives in the project notes; in short:
 - [x] **Phase 3: library.** Read your Calibre library (read-only) and match it to catalog works.
 - [x] **Phase 4: ingest scanner.** Identify and match every file in a drop folder, on an interval. Report only.
 - [x] **Phase 5: review.** Keyboard-driven review of everything the matcher wasn't sure about.
-- [ ] **Phase 6: import.** Convert to EPUB with
-      `ebook-convert`, add to Calibre with `calibredb`. Dry run by default, with an undo log. DRM is flagged,
-      never stripped.
+- [x] **Phase 6: import.** Convert to EPUB and add to Calibre with Calibre's own tools; dry run, trash and undo.
 - [ ] **Phases 7–10: the *arr part.** Monitored authors, wanted list, Prowlarr, download clients, automation.
 
 ## Run on Unraid (or any Docker host)
@@ -40,8 +38,8 @@ stays clean. Then, go to **Catalog**, and click **Download & build catalog**.
 |---|---|
 | `/config` | SQLite database (`tomearr.db`). Put this on cache/SSD. |
 | `/data` | Downloaded dump files in `/data/dumps`. |
-| `/calibre` | Your Calibre library (the folder containing `metadata.db`). Mount it read-only (`:ro`). |
-| `/ingest` | Drop folder for new and unsorted ebooks (read-only for now). Set `INGEST_FOLDER` in `.env` to change it. |
+| `/calibre` | Your Calibre library (the folder containing `metadata.db`), read-write so imports can add books. Set `CALIBRE_LIBRARY` in `.env` to change it. |
+| `/ingest` | Drop folder for new and unsorted ebooks, read-write so imported originals can be moved to the trash. Set `INGEST_FOLDER` in `.env` to change it. |
 
 Already have the dumps (the Open Library site offers torrents)? Put them in `/data/dumps` named
 `ol_dump_<kind>.txt.gz` (no date, e.g. `ol_dump_editions.txt.gz`), then click **Import only**.
@@ -84,8 +82,8 @@ compose file. Then check it under **Settings → Test connection**, then **Libra
   read with and without volume numbers, series notes and an author name tacked on, and a title match with a
   clearly different author is never accepted.
 - Problems in a Calibre record itself are flagged under **Calibre problems**, for example an ISBN that belongs to a
-  different book (the title and author win, and the ISBN is reported). Writing corrections back into Calibre
-  comes with Phase 6.
+  different book (the title and author win, and the ISBN is reported). Tomearr doesn't rewrite your existing
+  Calibre records; fix those in Calibre.
 - Use **fix** on a book to pick the right work or mark it "not in the catalog". Manual matches are never
   changed by a sync; "Back to automatic" undoes one.
 - Re-syncing only re-matches books that changed in Calibre or are still unmatched (or everything, with
@@ -144,6 +142,38 @@ author".
   file's contents change, its decision is cleared.
 - Your edits are saved with the decision; the import step will write them into Calibre.
 - **Ready to import** = files you accepted plus confident automatic matches you didn't overrule.
+
+## Import into Calibre
+
+**Import** shows a plan first (a dry run) and does nothing until you press Import. For each file:
+
+1. it's copied to `/config/staging`; the original is never edited,
+2. converted to EPUB if it isn't one (MOBI, AZW3, FB2, DOCX, ... via Calibre's `ebook-convert`),
+3. the metadata is written into the EPUB: your edits, else the catalog's title and authors, plus ISBN, series,
+   language and the Open Library id,
+4. added to Calibre with Calibre's own `calibredb`, so Calibre names the `Author/Title (id)/` folders and files and
+   updates `metadata.db`; if you already own the book, the EPUB is added to that book instead,
+5. Calibre is asked to confirm the EPUB is there; only then are MOBI/AZW3/AZW/PRC removed from that book (each
+   copied to the trash first; the list is in Settings),
+6. the original leaves the ingest folder for `/config/trash`, kept 14 days by default, then deleted.
+
+A failure part-way rolls back what reached Calibre. Every import can be undone (one book, or a whole run): the
+book or EPUB comes out of Calibre, replaced formats go back in, and the original returns to the ingest folder.
+
+- **PDFs** need your OK each time: convert, look at the result (text sample and a download link), then approve.
+- **Archives** (zip, rar, 7z) are unpacked into a folder next to them; the next scan picks up what was inside.
+- **Duplicates** of a file already in Calibre go to the trash (a setting).
+- **Books already in Calibre** that only have MOBI/AZW3/...: the second tab converts them to EPUB the same way.
+- **Import automatically** after each scan is a setting (off by default).
+
+**How Tomearr writes to Calibre.** By default it runs `calibredb --library-path /calibre` directly: no login, the
+same way Calibre-Web writes to the library. The Calibre desktop app keeps its own view in memory and shows books
+added by other programs after a restart (or Library → Check library); Calibre-Web sees them straight away. A
+*content server* mode is also there, but Calibre only accepts changes over the network from a logged-in Calibre
+user, so it needs one.
+
+The Docker image includes Calibre's official command-line build (`--build-arg CALIBRE_VERSION=x.y.z` pins one) and
+`bsdtar` for archives.
 
 ## How search works
 

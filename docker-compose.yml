@@ -10,10 +10,10 @@ services:
       - /mnt/user/appdata/tomearr/config:/config
       # Downloaded Open Library dumps (~13 GB with editions). Can live on the array.
       - /mnt/user/appdata/tomearr/data:/data
-      # Your Calibre library (the folder with metadata.db), read-only: Tomearr only reads it until Phase 6.
-      # To use a different folder, set CALIBRE_LIBRARY in .env instead of editing this file.
-      - "${CALIBRE_LIBRARY:-/mnt/user/appdata/calibre/Calibre Library}:/calibre:ro"
-      # Ingest (drop) folder: new and unsorted ebooks. Read-only while Tomearr only reports on it (Phase 4);
-      # the import step (Phase 6) will need write access to move files out. Override with INGEST_FOLDER in .env.
-      - "${INGEST_FOLDER:-/mnt/user/data/download/completed/ebooks}:/ingest:ro"
+      # Your Calibre library (the folder with metadata.db). Read-write: imports add books to it with Calibre's
+      # own calibredb tool. To use a different folder, set CALIBRE_LIBRARY in .env instead of editing this file.
+      - "${CALIBRE_LIBRARY:-/mnt/user/appdata/calibre/Calibre Library}:/calibre"
+      # Ingest (drop) folder: new and unsorted ebooks. Read-write: imported originals are moved out of it into
+      # the trash under /config/trash. Override with INGEST_FOLDER in .env.
+      - "${INGEST_FOLDER:-/mnt/user/data/download/completed/ebooks}:/ingest"
     restart: unless-stopped

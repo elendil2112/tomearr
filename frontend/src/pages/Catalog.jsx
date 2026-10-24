@@ -9,6 +9,7 @@ const KIND_LABEL = {
   index: "Build search index",
   library_sync: "Sync Calibre library",
   ingest_scan: "Scan ingest folder",
+  calibre_import: "Import into Calibre",
 };
 
 const DUMP_INFO = {
@@ -34,13 +35,16 @@ function describe(job) {
   if (job.kind === "library_sync" && p.total) return `${formatNumber(p.done)} of ${formatNumber(p.total)} books`;
   if (job.kind === "ingest_scan" && p.total) return `${p.step}: ${formatNumber(p.done)} of ${formatNumber(p.total)} files`;
   if (job.kind === "ingest_scan" && p.step) return p.step;
+  if (job.kind === "calibre_import" && p.total != null)
+    return p.step === "done" ? `${p.done} done, ${p.failed} failed` : `${formatNumber(p.done)} of ${formatNumber(p.total)}${p.current ? `: ${p.current}` : ""}`;
+  if (job.kind === "calibre_import" && p.step) return p.step;
   if (job.kind === "library_sync" && p.step) return p.step;
   return "";
 }
 
 function fraction(job) {
   const p = job.progress || {};
-  if ((job.kind === "library_sync" || job.kind === "ingest_scan") && p.total) return Math.min(1, (p.done || 0) / p.total);
+  if (["library_sync", "ingest_scan", "calibre_import"].includes(job.kind) && p.total) return Math.min(1, (p.done || 0) / p.total);
   return (job.kind === "download" || job.kind === "import") && p.total ? Math.min(1, p.bytes / p.total) : null;
 }
 

@@ -214,7 +214,9 @@ export default function Ingest() {
       <div className="tiles">
         <div className="tile">
           <div className="tile-num">{formatNumber(stats?.files)}</div>
-          <div className="tile-label">files · {formatNumber(stats?.ready)} ready to import</div>
+          <div className="tile-label">
+            files · <a href="#/import">{formatNumber(stats?.ready)} ready to import</a>
+          </div>
         </div>
         <div className="tile">
           <div className="tile-num">{formatNumber(b.matched)}</div>

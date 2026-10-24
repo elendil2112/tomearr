@@ -18,7 +18,7 @@ from pathlib import Path
 
 import orjson
 
-from . import db, extract, filenames, matcher
+from . import db, extract, filenames, library, matcher
 
 DEFAULT_INGEST_PATH = os.environ.get("TOMEARR_INGEST", "/ingest")
 DEFAULTS = {"ingest_path": DEFAULT_INGEST_PATH, "ingest_interval_min": "5", "ingest_settle_sec": "120",
@@ -332,7 +332,7 @@ def scan(conn: sqlite3.Connection, settings, progress, cancelled, full: bool = F
             rematched += 1
         conn.commit()
 
-    cal = Path(db.get_meta(conn, "setting_calibre_path", "/calibre"))
+    cal = Path(library.calibre_path(conn))
     assign_buckets(conn, cal if (cal / "metadata.db").exists() else None, progress)
     result = {"step": "done", "files": len(found), "read": done, "removed": len(gone), "rematched": rematched,
               **counts}

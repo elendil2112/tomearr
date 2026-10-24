@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, ingest, isbn, library, review, search
+from . import calibre_cli, db, importer, ingest, isbn, library, review, search
 from .scheduler import Scheduler
 from .config import KINDS, get_settings
 from .jobs import JobRunner
@@ -32,6 +32,24 @@ class SettingsBody(BaseModel):
     ingest_interval_min: float | None = None
     ingest_settle_sec: int | None = None
     library_sync_interval_min: float | None = None
+    trash_days: int | None = None
+    calibre_mode: str | None = None
+    calibre_url: str | None = None
+    calibre_library_id: str | None = None
+    calibre_username: str | None = None
+    calibre_password: str | None = None      # write-only; GET reports only whether it's set
+    replace_formats: str | None = None
+    delete_duplicates: bool | None = None
+    import_auto: bool | None = None
+
+
+class ImportRun(BaseModel):
+    keys: list[str] | None = None     # plan item keys; None = everything selected by default
+    library: bool = False             # convert books already in Calibre instead of ingest files
+
+
+class PdfBody(BaseModel):
+    action: str                       # convert | approve | reject
 
 
 class DecideBody(BaseModel):
@@ -70,9 +88,10 @@ class MatchBody(BaseModel):
 
 
 LANG_RE = re.compile(r"^(all|[a-z]{3})$")
-DEFAULT_SETTINGS = {"language": "eng", "calibre_path": library.DEFAULT_CALIBRE_PATH, **ingest.DEFAULTS}
+DEFAULT_SETTINGS = {"language": "eng", "calibre_path": library.DEFAULT_CALIBRE_PATH, **ingest.DEFAULTS,
+                    **importer.DEFAULTS}
 NUMERIC_SETTINGS = {"ingest_interval_min": (0, 1440), "ingest_settle_sec": (0, 86400),
-                    "library_sync_interval_min": (0, 10080)}
+                    "library_sync_interval_min": (0, 10080), "trash_days": (0, 3650)}
 
 
 class DownloadRequest(BaseModel):
@@ -190,6 +209,9 @@ def create_app() -> FastAPI:
         out = {k: db.get_meta(conn, f"setting_{k}", v) for k, v in DEFAULT_SETTINGS.items()}
         for k in NUMERIC_SETTINGS:
             out[k] = float(out[k]) if "." in str(out[k]) else int(out[k])
+        for k in ("delete_duplicates", "import_auto"):
+            out[k] = str(out[k]) == "1"
+        out["calibre_password_set"] = bool(db.get_meta(conn, "setting_calibre_password"))
         return out
 
     @app.get("/api/settings")
@@ -219,6 +241,29 @@ def create_app() -> FastAPI:
                 if not p.startswith("/"):
                     raise HTTPException(400, "Ingest path must be an absolute path inside the container, e.g. /ingest")
                 db.set_meta(conn, "setting_ingest_path", p)
+            if body.calibre_mode is not None:
+                if body.calibre_mode not in ("server", "direct"):
+                    raise HTTPException(400, "calibre_mode must be 'server' or 'direct'")
+                db.set_meta(conn, "setting_calibre_mode", body.calibre_mode)
+            if body.calibre_url is not None:
+                u = body.calibre_url.strip().rstrip("/")
+                if u and not re.match(r"^https?://[^\s/]+(:\d+)?(/\S*)?$", u):
+                    raise HTTPException(400, "Calibre server address should look like http://192.168.0.229:8221")
+                db.set_meta(conn, "setting_calibre_url", u)
+            for k in ("calibre_library_id", "calibre_username"):
+                v = getattr(body, k)
+                if v is not None:
+                    db.set_meta(conn, f"setting_{k}", v.strip())
+            if body.calibre_password is not None:
+                db.set_meta(conn, "setting_calibre_password", body.calibre_password)
+            if body.replace_formats is not None:
+                fm = ",".join(sorted({f.strip().upper() for f in body.replace_formats.split(",")
+                                      if f.strip() and f.strip().upper() != "EPUB"}))
+                db.set_meta(conn, "setting_replace_formats", fm)
+            for k in ("delete_duplicates", "import_auto"):
+                v = getattr(body, k)
+                if v is not None:
+                    db.set_meta(conn, f"setting_{k}", "1" if v else "0")
             for k, (lo, hi) in NUMERIC_SETTINGS.items():
                 v = getattr(body, k)
                 if v is not None:
@@ -413,6 +458,68 @@ def create_app() -> FastAPI:
     @app.post("/api/review/bulk")
     def review_bulk(body: BulkBody):
         return reviewing(lambda c: review.bulk_accept(c, body.min_confidence, body.author_key, body.dry_run))
+
+    # --- import into Calibre (Phase 6) --------------------------------------
+    def importing(fn):
+        conn = conn_()
+        try:
+            return fn(conn)
+        except KeyError:
+            raise HTTPException(404, "not found")
+        except (importer.ImportError_, calibre_cli.CalibreCLIError) as exc:
+            raise HTTPException(400, str(exc))
+        finally:
+            conn.close()
+
+    @app.post("/api/calibre/test")
+    def calibre_test():
+        def t(conn):
+            try:
+                return calibre_cli.Calibre(importer.target(conn)).test()
+            except calibre_cli.CalibreCLIError as exc:
+                return {"ok": False, "message": str(exc), "target": importer.target(conn).describe(),
+                        "version": calibre_cli.version()}
+        return importing(t)
+
+    @app.get("/api/import/plan")
+    def import_plan(library: bool = False):
+        return importing(lambda c: importer.plan_library(c) if library else importer.plan(c))
+
+    @app.post("/api/import/run")
+    def import_run(body: ImportRun):
+        return {"job_id": runner.submit("calibre_import", {"keys": body.keys, "library": body.library})}
+
+    @app.get("/api/import/history")
+    def import_history(limit: int = Query(200, le=1000)):
+        return importing(lambda c: importer.history(c, limit))
+
+    @app.post("/api/import/{import_id}/undo")
+    def import_undo(import_id: int):
+        return importing(lambda c: importer.undo(c, import_id, settings))
+
+    @app.post("/api/import/batch/{batch}/undo")
+    def import_undo_batch(batch: int):
+        return importing(lambda c: importer.undo_batch(c, batch, settings))
+
+    @app.post("/api/import/pdf/{file_id}")
+    def import_pdf(file_id: int, body: PdfBody):
+        return importing(lambda c: importer.pdf_action(c, settings, file_id, body.action))
+
+    @app.get("/api/import/pdf/{file_id}/preview")
+    def import_pdf_preview(file_id: int):
+        try:
+            p = importer.pdf_preview(settings, file_id)
+        except KeyError:
+            raise HTTPException(404, "no converted EPUB for this file yet")
+        p.pop("path")
+        return p
+
+    @app.get("/api/import/pdf/{file_id}/epub")
+    def import_pdf_epub(file_id: int):
+        f = settings.config_dir / "staging" / str(file_id) / "book.epub"
+        if not f.is_file():
+            raise HTTPException(404, "no converted EPUB for this file yet")
+        return FileResponse(f, media_type="application/epub+zip", filename=f"tomearr-preview-{file_id}.epub")
 
     # --- frontend ---------------------------------------------------------
     static = settings.static_dir

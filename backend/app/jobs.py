@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import orjson
 
-from . import db, ingest, library, ol_import
+from . import db, importer, ingest, library, ol_import
 from .config import DUMP_URL, KINDS, Settings
 
 
@@ -137,8 +137,9 @@ class JobRunner:
 
         status, message = "done", None
         try:
-            self._dispatch(conn, job["kind"], params, progress, cancelled)
-        except (JobCancelled, ol_import.ImportCancelled, library.SyncCancelled, ingest.ScanCancelled):
+            self._dispatch(conn, job["kind"], {**params, "_job_id": job_id}, progress, cancelled)
+        except (JobCancelled, ol_import.ImportCancelled, library.SyncCancelled, ingest.ScanCancelled,
+                importer.ImportCancelled):
             status, message = "cancelled", "Cancelled"
         except Exception as exc:
             status, message = "failed", f"{type(exc).__name__}: {exc}"
@@ -181,6 +182,13 @@ class JobRunner:
         elif kind == "ingest_scan":
             ingest.scan(conn, s, progress, cancelled, full=params.get("full", False),
                         rematch=params.get("rematch", False))
+        elif kind == "calibre_import":
+            res = importer.run(conn, s, progress, cancelled, keys=params.get("keys"), batch=params.get("_job_id"),
+                               library=params.get("library", False))
+            if res["done"]:
+                # refresh what Tomearr knows: Calibre's new books, and the ingest folder without the imported files
+                self.submit("library_sync", {"after_import": True})
+                self.submit("ingest_scan", {"after_import": True})
         elif kind == "library_sync":
             library.sync(conn, s.config_dir / "cache", progress, cancelled, rematch=params.get("rematch", False))
         else:
