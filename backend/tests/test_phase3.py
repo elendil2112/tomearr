@@ -122,6 +122,30 @@ def test_read_books_fields(env):
     assert books[6]["formats"] is None
 
 
+def test_read_books_newer_calibre_schema(env):
+    """Newer Calibre versions have no books.isbn column (ISBNs live only in identifiers)."""
+    d = make_calibre(env / "calibre")
+    c = sqlite3.connect(d / "metadata.db")
+    c.execute("ALTER TABLE books DROP COLUMN isbn")
+    c.execute("ALTER TABLE books DROP COLUMN lccn")
+    c.execute("ALTER TABLE books DROP COLUMN has_cover")
+    c.commit()
+    c.close()
+    snap = calibre.snapshot(d, env / "config" / "cache")
+    books = {b["calibre_id"]: b for b in calibre.read_books(snap)}
+    assert books[1]["isbn"] == "9780261102217"   # from the identifiers table
+    assert books[1]["has_cover"] == 0 and len(books) == 6
+
+
+def test_read_books_without_optional_tables(env):
+    d = make_calibre(env / "calibre")
+    c = sqlite3.connect(d / "metadata.db")
+    c.executescript("DROP TABLE identifiers; DROP TABLE books_languages_link; DROP TABLE books_series_link;")
+    c.close()
+    books = list(calibre.read_books(calibre.snapshot(d, env / "config" / "cache")))
+    assert len(books) == 6 and all(b["isbn"] is None and b["series"] is None for b in books)
+
+
 # --- sync -------------------------------------------------------------------------
 
 def test_sync_matches_library(conn, lib, env):  # noqa: F811

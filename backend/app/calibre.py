@@ -97,11 +97,19 @@ def _tables(c: sqlite3.Connection) -> set[str]:
     return {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
+OPTIONAL_BOOK_COLS = ("title", "author_sort", "isbn", "pubdate", "series_index", "has_cover", "last_modified")
+
+
 def read_books(snapshot_path: Path):
     """Yield one dict per Calibre book. Streams, so a big library never sits in memory at once."""
     c = _open(snapshot_path)
     try:
         tables = _tables(c)
+        # Calibre's books table has changed over the years (newer versions dropped books.isbn, for example), so
+        # only select the optional columns that exist and read the rest as NULL.
+        have = {r[1] for r in c.execute("PRAGMA table_info(books)")}
+        book_cols = ", ".join(f"b.{col}" if col in have else f"NULL AS {col}" for col in OPTIONAL_BOOK_COLS)
+        has_ids = "identifiers" in tables
         has_lang = {"books_languages_link", "languages"} <= tables
         has_series = {"books_series_link", "series"} <= tables
         lang_sql = ("(SELECT l.lang_code FROM books_languages_link bl JOIN languages l ON l.id = bl.lang_code "
@@ -109,7 +117,7 @@ def read_books(snapshot_path: Path):
         series_sql = ("(SELECT s.name FROM books_series_link bs JOIN series s ON s.id = bs.series "
                       " WHERE bs.book = b.id LIMIT 1)") if has_series else "NULL"
         rows = c.execute(
-            f"SELECT b.id, b.title, b.author_sort, b.isbn, b.pubdate, b.series_index, b.has_cover, b.last_modified, "
+            f"SELECT b.id, {book_cols}, "
             f"  (SELECT group_concat(name, ' & ') FROM (SELECT a.name FROM books_authors_link ba "
             f"     JOIN authors a ON a.id = ba.author WHERE ba.book = b.id ORDER BY ba.id)) AS authors, "
             f"  (SELECT group_concat(format, ',') FROM data d WHERE d.book = b.id) AS formats, "
@@ -118,7 +126,8 @@ def read_books(snapshot_path: Path):
         )
         ident = c.cursor()
         for r in rows:
-            ids = {t.lower(): v for t, v in ident.execute("SELECT type, val FROM identifiers WHERE book=?", (r["id"],))}
+            ids = ({t.lower(): v for t, v in ident.execute("SELECT type, val FROM identifiers WHERE book=?", (r["id"],))}
+                   if has_ids else {})
             isbn = to_isbn13(ids.get("isbn")) or to_isbn13(r["isbn"])
             formats = sorted({f.upper() for f in (r["formats"] or "").split(",") if f})
             yield {
