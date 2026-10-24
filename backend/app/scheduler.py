@@ -3,7 +3,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import db, ingest, library
+from . import db, importer, ingest, library
 
 
 def _minutes_since(ts: str | None) -> float:
@@ -58,6 +58,18 @@ class Scheduler:
                 if min(_minutes_since(db.get_meta(conn, last_key)), _minutes_since(last)) >= every:
                     self.runner.submit(kind, {**params, "scheduled": True})
                     submitted.append(kind)
+            # automatic import: after a scan has found files that are ready
+            if importer.setting(conn, "import_auto") == "1" and not self._active(conn, "calibre_import") \
+                    and not self._active(conn, "ingest_scan"):
+                last_scan = db.get_meta(conn, "ingest_scanned_at")
+                last_import = conn.execute("SELECT max(created_at) FROM jobs WHERE kind='calibre_import'").fetchone()[0]
+                if last_scan and (not last_import or last_scan > last_import) and importer.plan(conn)["selected"]:
+                    self.runner.submit("calibre_import", {"scheduled": True})
+                    submitted.append("calibre_import")
+            # purge the trash once a day
+            if _minutes_since(db.get_meta(conn, "trash_purged_at")) >= 24 * 60:
+                importer.purge_trash(conn, self.settings)
+                db.set_meta(conn, "trash_purged_at", conn.execute("SELECT datetime('now')").fetchone()[0])
         finally:
             conn.close()
         return submitted

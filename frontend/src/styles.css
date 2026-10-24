@@ -286,3 +286,18 @@ kbd { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; border: 1
   .rv-file { position: static; }
 }
 .rv-fields .link { justify-self: start; }
+
+/* --- Phase 6: import -------------------------------------------------------- */
+.plan-group { margin-top: 14px; }
+.plan-group h3 { font-size: 0.95rem; margin: 0 0 6px; display: flex; gap: 8px; align-items: baseline; }
+.plan-items { list-style: none; margin: 0; padding: 0; }
+.plan-items li { padding: 7px 0; border-bottom: 1px dashed var(--line); display: flex; gap: 8px; align-items: baseline; }
+.plan-items label { display: flex; gap: 10px; align-items: baseline; cursor: pointer; min-width: 0; flex: 1; }
+.plan-what { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.plan-steps { color: var(--muted); font-size: 0.82rem; }
+.pdf-card { border-top: 1px solid var(--line); padding: 12px 0; }
+.pdf-sample { white-space: pre-wrap; font-size: 0.82rem; max-height: 220px; overflow: auto; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 6px 0; }
+ul.jobs.card { list-style: none; padding: 4px 20px; }
+.inline-field input.wide { max-width: 320px; }
+.hist-undone { opacity: 0.6; }

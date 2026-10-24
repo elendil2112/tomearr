@@ -198,7 +198,36 @@ def _migrate_6(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5, _migrate_6]  # MIGRATIONS[i] upgrades version i+1 to i+2
+def _migrate_7(conn: sqlite3.Connection) -> None:
+    """Phase 6: imports into Calibre (with everything needed to undo them) and the PDF opt-in state."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(ingest_files)")}
+    if "pdf_state" not in cols:
+        # NULL (held) | convert (you opted in) | converted (EPUB staged, waiting for you) | approved
+        conn.execute("ALTER TABLE ingest_files ADD COLUMN pdf_state TEXT")
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS imports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch INTEGER,                    -- the job that did it
+        action TEXT NOT NULL,             -- add | add_format | convert_existing | delete_duplicate | unpack
+        path TEXT,                        -- ingest path (relative), if it came from the ingest folder
+        sha256 TEXT,
+        source_format TEXT,
+        work_key TEXT,
+        calibre_id INTEGER,
+        added_format TEXT,                -- what Tomearr added to Calibre (EPUB)
+        removed_json TEXT,                -- [{format, backup}] formats removed from Calibre, with backup copies
+        trash_path TEXT,                  -- where the ingest file went (inside /config/trash)
+        meta_json TEXT,                   -- metadata written
+        status TEXT NOT NULL,             -- done | failed | undone
+        error TEXT,
+        at TEXT NOT NULL DEFAULT (datetime('now')),
+        undone_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_imports_batch ON imports(batch);
+    """)
+
+
+MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5, _migrate_6, _migrate_7]  # MIGRATIONS[i] upgrades version i+1 to i+2
 SCHEMA_VERSION = 1 + len(MIGRATIONS)
 
 

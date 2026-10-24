@@ -17,6 +17,37 @@ jobs:
       - run: python -m pytest -q
         working-directory: backend
 
+  calibre:
+    # Runs the import tests against real Calibre tools and a real calibre-server.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends calibre libarchive-tools
+      - run: pip install -r backend/requirements.txt pytest
+      - run: python -m pytest -q tests/test_phase6.py
+        working-directory: backend
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  docker:
+    # Builds the real image (with Calibre's official build) and checks the tools and the app start inside it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t tomearr:ci .
+      - run: |
+          docker run --rm tomearr:ci sh -c 'calibredb --version && ebook-convert --version | head -1 && ebook-meta --version | head -1 && bsdtar --version && python -c "import app.main"'
+      - run: |
+          docker run -d --name tomearr-smoke -p 127.0.0.1:18222:8222 tomearr:ci
+          for i in $(seq 1 30); do curl -sf localhost:18222/api/status && break; sleep 1; done
+          curl -sf localhost:18222/api/status
+          docker exec tomearr-smoke sh -c 'mkdir -p /tmp/lib && cd /tmp && printf "%s\n" "hello world" > a.txt && ebook-convert a.txt a.epub && calibredb add a.epub --library-path /tmp/lib'
+      - if: always()
+        run: docker logs tomearr-smoke 2>&1 | tail -50 || true
+
   frontend:
     runs-on: ubuntu-latest
     steps:
