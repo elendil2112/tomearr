@@ -41,11 +41,12 @@ jobs:
       - run: |
           docker run --rm tomearr:ci sh -c 'calibredb --version && ebook-convert --version | head -1 && ebook-meta --version | head -1 && bsdtar --version && python -c "import app.main"'
       - run: |
-          docker run -d --name t -p 8222:8222 tomearr:ci
-          for i in $(seq 1 30); do curl -sf localhost:8222/api/status && break; sleep 1; done
-          curl -sf localhost:8222/api/status
-          docker exec t sh -c 'mkdir -p /tmp/lib && cd /tmp && printf "%s\n" "hello world" > a.txt && ebook-convert a.txt a.epub && calibredb add a.epub --library-path /tmp/lib'
-          docker rm -f t
+          docker run -d --name tomearr-smoke -p 127.0.0.1:18222:8222 tomearr:ci
+          for i in $(seq 1 30); do curl -sf localhost:18222/api/status && break; sleep 1; done
+          curl -sf localhost:18222/api/status
+          docker exec tomearr-smoke sh -c 'mkdir -p /tmp/lib && cd /tmp && printf "%s\n" "hello world" > a.txt && ebook-convert a.txt a.epub && calibredb add a.epub --library-path /tmp/lib'
+      - if: always()
+        run: docker logs tomearr-smoke 2>&1 | tail -50 || true
 
   frontend:
     runs-on: ubuntu-latest
