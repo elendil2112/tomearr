@@ -94,7 +94,41 @@ def _migrate_2(conn: sqlite3.Connection) -> None:
     conn.executescript(EDITIONS_DDL + SIGNALS_DDL)
 
 
-MIGRATIONS = [_migrate_2]  # MIGRATIONS[i] upgrades version i+1 to i+2
+def _migrate_3(conn: sqlite3.Connection) -> None:
+    """Phase 3: what the user owns (mirrored from Calibre) and which authors they monitor."""
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS library_books (
+        calibre_id INTEGER PRIMARY KEY,   -- books.id in Calibre's metadata.db
+        title TEXT NOT NULL,
+        authors TEXT,                     -- ' & ' separated, Calibre's order
+        author_sort TEXT,
+        isbn TEXT,                        -- normalized ISBN-13 if Calibre has a valid one
+        ol_id TEXT,                       -- Calibre 'openlibrary' identifier, if any
+        formats TEXT,                     -- ',EPUB,MOBI,' (comma wrapped for instr())
+        language TEXT,
+        series TEXT,
+        series_index REAL,
+        pubdate TEXT,
+        has_cover INTEGER NOT NULL DEFAULT 0,
+        last_modified TEXT,
+        work_key TEXT,                    -- matched catalog work, NULL if unmatched
+        match_method TEXT,                -- openlibrary | isbn | title_author | manual | NULL
+        match_confidence INTEGER NOT NULL DEFAULT 0,
+        match_locked INTEGER NOT NULL DEFAULT 0,  -- 1 = set by the user; sync never changes it
+        synced_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_work ON library_books(work_key);
+    CREATE INDEX IF NOT EXISTS idx_library_sort ON library_books(author_sort, title);
+
+    CREATE TABLE IF NOT EXISTS monitored_authors (
+        author_key TEXT PRIMARY KEY,
+        monitor TEXT NOT NULL DEFAULT 'none',     -- all | future | none | selected (used from Phase 7)
+        added_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
+
+
+MIGRATIONS = [_migrate_2, _migrate_3]  # MIGRATIONS[i] upgrades version i+1 to i+2
 SCHEMA_VERSION = 1 + len(MIGRATIONS)
 
 

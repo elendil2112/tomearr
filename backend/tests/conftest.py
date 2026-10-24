@@ -108,3 +108,69 @@ def env(tmp_path, monkeypatch):
     with gzip.open(tmp_path / "data" / "dumps" / "ol_dump_reading-log.txt.gz", "wt") as fh:
         fh.write(READING_LOG)
     return tmp_path
+
+
+# --- a small Calibre library (subset of the real metadata.db schema) ----------------------------------------
+
+CALIBRE_SCHEMA = """
+CREATE TABLE books (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL DEFAULT 'Unknown',
+    sort TEXT, timestamp TIMESTAMP, pubdate TIMESTAMP DEFAULT '0101-01-01 00:00:00+00:00',
+    series_index REAL NOT NULL DEFAULT 1.0, author_sort TEXT, isbn TEXT DEFAULT '', lccn TEXT DEFAULT '',
+    path TEXT NOT NULL DEFAULT '', flags INTEGER NOT NULL DEFAULT 1, uuid TEXT, has_cover BOOL DEFAULT 0,
+    last_modified TIMESTAMP NOT NULL DEFAULT '2000-01-01 00:00:00+00:00');
+CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT NOT NULL, sort TEXT, link TEXT NOT NULL DEFAULT '');
+CREATE TABLE books_authors_link (id INTEGER PRIMARY KEY, book INTEGER NOT NULL, author INTEGER NOT NULL);
+CREATE TABLE data (id INTEGER PRIMARY KEY, book INTEGER NOT NULL, format TEXT NOT NULL,
+    uncompressed_size INTEGER NOT NULL, name TEXT NOT NULL);
+CREATE TABLE identifiers (id INTEGER PRIMARY KEY, book INTEGER NOT NULL, type TEXT NOT NULL DEFAULT 'isbn',
+    val TEXT NOT NULL);
+CREATE TABLE languages (id INTEGER PRIMARY KEY, lang_code TEXT NOT NULL);
+CREATE TABLE books_languages_link (id INTEGER PRIMARY KEY, book INTEGER NOT NULL, lang_code INTEGER NOT NULL,
+    item_order INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE series (id INTEGER PRIMARY KEY, name TEXT NOT NULL, sort TEXT);
+CREATE TABLE books_series_link (id INTEGER PRIMARY KEY, book INTEGER NOT NULL, series INTEGER NOT NULL);
+"""
+
+# id, title, authors, formats, identifiers, extra
+CALIBRE_BOOKS = [
+    # ISBN match (ISBN-10 stored in identifiers, as Calibre does)
+    (1, "The Hobbit", ["J. R. R. Tolkien"], ["EPUB", "MOBI"], {"isbn": "0261102214"}, {"series": "Middle-earth"}),
+    # Open Library id match
+    (2, "LOTR omnibus", ["Tolkien, J.R.R."], ["PDF"], {"openlibrary": "OL27448W"}, {}),
+    # title + author only, title with subtitle and series noise
+    (3, "The Silmarillion: Illustrated (Middle-earth #3)", ["J.R.R. Tolkien"], ["AZW3"], {}, {}),
+    (4, "Hamlet, Prince of Denmark", ["William Shakespeare"], ["EPUB"], {}, {"lang": "eng"}),
+    # nothing like it in the catalog
+    (5, "My Grocery List 2019", ["Joe Nobody"], ["PDF"], {}, {}),
+    # no files at all
+    (6, "Macbeth", ["William Shakespeare"], [], {}, {}),
+]
+
+
+def make_calibre(lib_dir, books=CALIBRE_BOOKS):
+    import sqlite3
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(lib_dir / "metadata.db")
+    c.executescript(CALIBRE_SCHEMA)
+    authors: dict[str, int] = {}
+    for bid, title, names, formats, ids, extra in books:
+        c.execute("INSERT INTO books(id, title, author_sort, last_modified, pubdate) VALUES(?,?,?,?,?)",
+                  (bid, title, names[0] if names else "", "2024-01-01 00:00:00+00:00", "0101-01-01 00:00:00+00:00"))
+        for n in names:
+            if n not in authors:
+                authors[n] = len(authors) + 1
+                c.execute("INSERT INTO authors(id, name, sort) VALUES(?,?,?)", (authors[n], n, n))
+            c.execute("INSERT INTO books_authors_link(book, author) VALUES(?,?)", (bid, authors[n]))
+        for f in formats:
+            c.execute("INSERT INTO data(book, format, uncompressed_size, name) VALUES(?,?,?,?)", (bid, f, 1000, title))
+        for t, v in ids.items():
+            c.execute("INSERT INTO identifiers(book, type, val) VALUES(?,?,?)", (bid, t, v))
+        if "series" in extra:
+            c.execute("INSERT OR IGNORE INTO series(id, name) VALUES(1, ?)", (extra["series"],))
+            c.execute("INSERT INTO books_series_link(book, series) VALUES(?, 1)", (bid,))
+        if "lang" in extra:
+            c.execute("INSERT OR IGNORE INTO languages(id, lang_code) VALUES(1, ?)", (extra["lang"],))
+            c.execute("INSERT INTO books_languages_link(book, lang_code) VALUES(?, 1)", (bid,))
+    c.commit()
+    c.close()
+    return lib_dir

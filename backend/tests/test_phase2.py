@@ -171,13 +171,13 @@ def test_migrates_phase1_database(env):
 
     c = db.connect(s.db_path)
     db.init(c)
-    assert db.schema_version(c) == db.SCHEMA_VERSION == 2
+    assert db.schema_version(c) == db.SCHEMA_VERSION
     cols = {r[1] for r in c.execute("PRAGMA table_info(works)")}
     assert {"edition_count", "popularity", "pop_rank", "languages"} <= cols
     # old index still searchable before a rebuild (joins on rowid until build_indexes switches it)
     assert search.search_works(c, "old")[0]["ol_key"] == "OL1W"
     db.init(c)  # idempotent
-    assert db.schema_version(c) == 2
+    assert db.schema_version(c) == db.SCHEMA_VERSION
     c.close()
 
 
@@ -200,9 +200,9 @@ def test_api_phase2(env):
         jobs = _wait(client, ids)
         assert [jobs[i]["status"] for i in ids] == ["done", "done"], jobs
 
-        assert client.get("/api/settings").json() == {"language": "eng"}
+        assert client.get("/api/settings").json()["language"] == "eng"
         assert client.get("/api/search/works?q=prince").json() == []
-        assert client.put("/api/settings", json={"language": "all"}).json() == {"language": "all"}
+        assert client.put("/api/settings", json={"language": "all"}).json()["language"] == "all"
         assert client.get("/api/search/works?q=prince").json()[0]["ol_key"] == "OL8W"
         assert client.get("/api/search/works?q=prince&lang=eng").json() == []
         assert client.put("/api/settings", json={"language": "english!"}).status_code == 400
@@ -215,7 +215,7 @@ def test_api_phase2(env):
         assert client.get("/api/works/OL404W").status_code == 404
 
         st = client.get("/api/status").json()
-        assert st["schema_version"] == 2 and st["editions_lite"] == {"languages": [], "isbn_only": False}
+        assert st["schema_version"] == db.SCHEMA_VERSION and st["editions_lite"] == {"languages": [], "isbn_only": False}
         assert {d["kind"] for d in st["dumps"]} == {"authors", "works", "editions", "ratings", "reading-log"}
 
 
