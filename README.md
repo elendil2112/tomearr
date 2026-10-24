@@ -65,8 +65,9 @@ Imports show live progress as a percentage of the compressed file read; download
 
 ## Your library (Calibre)
 
-Mount your Calibre library at `/calibre` (the compose file mounts `/mnt/user/data/books` read-only; change it to
-your path), check it under **Settings → Test connection**, then **Library → Sync now**.
+Mount your Calibre library at `/calibre`. The compose file mounts `/mnt/user/appdata/calibre/Calibre Library`
+read-only; for a different folder, put `CALIBRE_LIBRARY=/path/to/library` in `.env` rather than editing the
+compose file. Then check it under **Settings → Test connection**, then **Library → Sync now**.
 
 - Tomearr never opens Calibre's `metadata.db` directly. It copies it (and any `-wal` file) into
   `/config/cache`, checks the copy is consistent, and reads only the copy. It takes no lock on your library and
