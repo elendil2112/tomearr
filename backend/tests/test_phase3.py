@@ -62,9 +62,53 @@ def test_match_prefers_real_work_over_decoys(conn):  # noqa: F811
     assert matcher.match_book(conn, "The Hobbit", ["Hobbit Fan"]).work_key == "OL6W"
 
 
-def test_isbn_with_wrong_title_is_low_confidence(conn):  # noqa: F811
+def test_wrong_isbn_falls_back_to_title_and_flags_it(conn):  # noqa: F811
+    # Calibre says this is The Hobbit's ISBN, but the title and author say Hamlet: trust the text, flag the ISBN.
+    m = matcher.match_book(conn, "Hamlet", ["William Shakespeare"], isbn="9780261102217")
+    assert m.work_key == "OL2W" and m.method == "title_author" and m.issues == ["isbn_mismatch"]
+    # nothing matches the text either: unmatched, with the ISBN's work offered as a candidate
     m = matcher.match_book(conn, "Completely Different Book", ["Someone"], isbn="9780261102217")
-    assert m.work_key == "OL262758W" and m.method == "isbn" and m.confidence < library.LOW_CONFIDENCE
+    assert m.work_key is None and m.issues == ["isbn_mismatch"]
+    assert "OL262758W" in [c["ol_key"] for c in m.candidates]
+
+
+def test_isbn_checks_edition_titles_too(conn):  # noqa: F811
+    # "Bilbo le Hobbit" is the title of the French edition (OL4M), not of the work. Give it an ISBN.
+    conn.execute("INSERT INTO isbns(isbn, edition_key) VALUES('9782253049418', 'OL4M')")
+    m = matcher.match_book(conn, "Bilbo le Hobbit", ["J.R.R. Tolkien"], isbn="9782253049418")
+    assert m.work_key == "OL262758W" and m.method == "isbn" and m.confidence >= 94 and not m.issues
+
+
+def test_edition_title_fallback(conn):  # noqa: F811
+    # No ISBN, and no work is called this, but one of Tolkien's editions is (a translation).
+    m = matcher.match_book(conn, "Bilbo le Hobbit", ["Tolkien| J.R.R."])
+    assert m.work_key == "OL262758W" and m.method == "edition_title" and 60 <= m.confidence < 90
+
+
+def test_same_title_different_author_is_not_a_match(conn):  # noqa: F811
+    m = matcher.match_book(conn, "The Hobbit Companion", ["John Schember"])
+    assert m.work_key is None
+    assert m.candidates and m.candidates[0]["ol_key"] == "OL7W"  # still offered for a manual fix
+
+
+def test_messy_calibre_title(conn):  # noqa: F811
+    m = matcher.match_book(conn, "Middle-earth Vol-3- The Silmarillion J.R.R Tolkien", ["Tolkien| J.R.R."])
+    assert m.work_key == "OL1W" and m.confidence >= 90
+
+
+def test_clean_author_names():
+    assert matcher.split_authors("Tolkien| J.R.R.") == ["J.R.R. Tolkien"]
+    assert matcher.split_authors("Neil Gaiman (Editor)") == ["Neil Gaiman"]
+    assert matcher.split_authors('“Stephen  King”') == ["Stephen King"]
+    assert matcher.split_authors("King, Stephen") == ["Stephen King"]
+    assert matcher.split_authors("Terry Pratchett & Neil Gaiman") == ["Terry Pratchett", "Neil Gaiman"]
+    assert matcher.split_authors("Tolkien, J.R.R.; Tolkien, Christopher") == ["J.R.R. Tolkien", "Christopher Tolkien"]
+    assert matcher.split_authors("Unknown") == [] and matcher.split_authors("") == []
+    assert matcher.split_authors("Simon and Garfunkel") == ["Simon and Garfunkel"]
+    assert matcher.split_authors("Martin Luther King, Jr.") == ["Martin Luther King, Jr."]
+    assert matcher.author_similarity("Tolkien| J.R.R.", "J.R.R. Tolkien") == 100
+    assert matcher.author_similarity("Martin Luther King Jr.", "Martin Luther King") == 100
+    assert matcher.author_similarity("García Márquez, Gabriel", "Gabriel Garcia Marquez") == 100
 
 
 def test_no_match(conn):  # noqa: F811
@@ -162,6 +206,7 @@ def test_sync_matches_library(conn, lib, env):  # noqa: F811
         6: ("OL3W", "title_author"),
     }
     assert _hash_dir(lib) == before  # Calibre untouched
+    assert _row(conn, 2)["authors"] == "J.R.R. Tolkien"   # "Tolkien, J.R.R." cleaned for display
 
 
 def test_resync_removes_deleted_and_keeps_manual(conn, lib, env):  # noqa: F811
@@ -181,6 +226,22 @@ def test_resync_removes_deleted_and_keeps_manual(conn, lib, env):  # noqa: F811
     assert library.clear_manual(conn, 5)
     _sync(conn, env)
     assert _row(conn, 5)["work_key"] is None and _row(conn, 5)["match_locked"] == 0
+
+
+def test_sync_flags_wrong_calibre_isbn(conn, lib, env):  # noqa: F811
+    c = sqlite3.connect(lib / "metadata.db")
+    c.execute("INSERT INTO books(id, title, author_sort) VALUES(7, 'Hamlet', 'Shakespeare| William')")
+    c.execute("INSERT INTO authors(id, name, sort) VALUES(99, 'Shakespeare| William', 'Shakespeare| William')")
+    c.execute("INSERT INTO books_authors_link(book, author) VALUES(7, 99)")
+    c.execute("INSERT INTO identifiers(book, type, val) VALUES(7, 'isbn', '0261102214')")  # The Hobbit's ISBN
+    c.commit()
+    c.close()
+    _sync(conn, env)
+    r = _row(conn, 7)
+    assert (r["work_key"], r["issues"], r["authors"]) == ("OL2W", "isbn_mismatch", "William Shakespeare")
+    page = library.list_books(conn, filt="issues")
+    assert page["total"] == 1 and page["items"][0]["issues"] == ["isbn_mismatch"]
+    assert library.stats(conn)["issues"] == 1
 
 
 def test_set_match_rejects_unknown_work(conn, lib, env):  # noqa: F811
@@ -263,4 +324,4 @@ def test_api_library_flow(env, monkeypatch):
         assert client.put("/api/library/404/match", json={"work_key": "OL2W"}).status_code == 404
         assert client.put("/api/library/5/match", json={"work_key": "OL2W"}).json()["match_method"] == "manual"
         assert client.delete("/api/library/5/match").json() == {"ok": True}
-        assert client.get("/api/status").json()["schema_version"] == 3
+        assert client.get("/api/status").json()["schema_version"] == db.SCHEMA_VERSION

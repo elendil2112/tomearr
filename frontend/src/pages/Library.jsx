@@ -7,10 +7,21 @@ const FILTERS = [
   ["not_epub", "Not EPUB yet", "not_epub"],
   ["low", "Check match", "low"],
   ["unmatched", "Unmatched", "unmatched"],
+  ["issues", "Calibre problems", "issues"],
   ["manual", "Manual", "manual"],
 ];
 
-const METHOD_LABEL = { isbn: "ISBN", openlibrary: "OL id", title_author: "title + author", manual: "manual" };
+const ISSUE_LABEL = {
+  isbn_mismatch: "Calibre's ISBN belongs to a different book",
+};
+
+const METHOD_LABEL = {
+  isbn: "ISBN",
+  openlibrary: "OL id",
+  title_author: "title + author",
+  edition_title: "edition title",
+  manual: "manual",
+};
 const PAGE = 200;
 
 function Formats({ formats }) {
@@ -108,6 +119,11 @@ function BookRow({ book, onChanged }) {
           ) : (
             <span className="match none">{book.match_locked ? "marked not in catalog" : "no match"}</span>
           )}
+          {book.issues?.map((i) => (
+            <span key={i} className="issue" title="Fix this in Calibre, or let Tomearr correct it once it can write to Calibre (Phase 6)">
+              ⚠ {ISSUE_LABEL[i] || i}
+            </span>
+          ))}
           <button className="link" onClick={() => setFixing(!fixing)}>
             {fixing ? "close" : "fix"}
           </button>
