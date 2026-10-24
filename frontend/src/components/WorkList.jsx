@@ -14,6 +14,16 @@ export function Cover({ id, title, size = "S" }) {
   );
 }
 
+export function OwnedBadge({ owned }) {
+  if (owned == null) return null;
+  const epub = owned.includes("EPUB");
+  return (
+    <span className={`owned ${epub ? "epub" : ""}`} title="In your Calibre library">
+      Owned{owned.length ? ` · ${owned.join(", ")}` : " · no files"}
+    </span>
+  );
+}
+
 export default function WorkList({ works, showAuthors = false }) {
   return (
     <ul className="rows">
@@ -25,6 +35,7 @@ export default function WorkList({ works, showAuthors = false }) {
               {w.title}
               {w.subtitle && <span className="subtitle">: {w.subtitle}</span>}
             </a>
+            <OwnedBadge owned={w.owned} />
             <div className="row-meta">
               {showAuthors &&
                 w.authors?.map((a, i) => (

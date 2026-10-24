@@ -53,6 +53,19 @@ export default function Work({ olKey }) {
         </div>
       </div>
 
+      {work.library_books?.length > 0 && (
+        <div className="notice ok-notice">
+          In your library:{" "}
+          {work.library_books
+            .map((b) => {
+              const f = (b.formats || "").split(",").filter(Boolean);
+              return `${b.title} (${f.length ? f.join(", ") : "no files"})`;
+            })
+            .join("; ")}
+          {work.owned && !work.owned.includes("EPUB") && " · not EPUB yet"}
+        </div>
+      )}
+
       <div className="tiles">
         <div className="tile">
           <div className="tile-num">{formatNumber(work.edition_count)}</div>

@@ -170,6 +170,36 @@ fieldset.lite legend { font-weight: 600; font-size: 0.9rem; padding: 0 6px; }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 0.92rem; margin: 6px 0 10px; }
 .field input { max-width: 320px; }
 
+/* --- Phase 3 ------------------------------------------------------------- */
+.owned { display: inline-block; margin-left: 8px; font-family: var(--sans); font-size: 0.72rem; font-weight: 600;
+  padding: 1px 8px; border-radius: 999px; vertical-align: middle;
+  background: color-mix(in srgb, var(--warn) 16%, var(--card)); color: var(--warn); }
+.owned.epub { background: color-mix(in srgb, var(--ok) 16%, var(--card)); color: var(--ok); }
+.notice.ok-notice { background: color-mix(in srgb, var(--ok) 12%, var(--card)); border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
+
+.lib-group { margin-top: 18px; }
+.lib-author { font-family: var(--serif); font-size: 1rem; margin: 0 0 2px; color: var(--muted); font-weight: 600;
+  border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.lib-book { padding: 10px 4px; }
+.lib-title { font-family: var(--serif); font-weight: 600; }
+.lib-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 4px; font-size: 0.85rem; }
+.fmt { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em; padding: 1px 6px; border-radius: 4px;
+  background: var(--line); color: var(--muted); }
+.fmt.epub { background: color-mix(in srgb, var(--ok) 18%, var(--card)); color: var(--ok); }
+.fmt.none { font-weight: 500; font-style: italic; }
+.match { color: var(--ink); }
+.match.low { color: var(--warn); }
+.match.none { color: var(--muted); font-style: italic; }
+.match-why { color: var(--muted); font-size: 0.78rem; margin-left: 6px; }
+.fixer { margin: 10px 0 4px; padding: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+.fixer .search { margin-bottom: 8px; }
+.fixer-results { list-style: none; margin: 0 0 6px; padding: 0; }
+.fixer-results button { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--ink);
+  padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+.fixer-results button:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.actions.center { justify-content: center; margin: 18px 0; }
+.card-head .actions { margin-top: 0; }
+
 @media (max-width: 600px) {
   .content { padding: 24px 16px 64px; }
   .topbar { padding: 0 16px; gap: 14px; }
@@ -180,4 +210,11 @@ fieldset.lite legend { font-weight: 600; font-size: 0.9rem; padding: 0 6px; }
   .search-bar { flex-direction: column; }
   .lang-select { max-width: none; }
   .dumps li { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .topbar nav { overflow-x: auto; scrollbar-width: none; min-width: 0; }
+  .topbar nav a { padding: 6px 8px; white-space: nowrap; }
+  .brand span { display: none; }
+  .tabs { overflow-x: auto; scrollbar-width: none; }
+  .tabs button { white-space: nowrap; padding: 10px 10px; }
 }
+.card .notice { margin: 14px 0 0; }
+.field select { max-width: 320px; }
