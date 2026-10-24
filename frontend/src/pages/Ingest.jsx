@@ -65,6 +65,17 @@ function FileRow({ f }) {
           <span className="owned">Calibre has {f.owned_formats.join(", ")}</span>
         )}
         {f.error && <span className="issue">{f.error}</span>}
+        {f.decision && (
+          <span className={`decision d-${f.decision}`}>
+            {f.decision === "accepted" ? `accepted${f.decided_title && f.decided_work_key !== f.work_key ? ` as ${f.decided_title}` : ""}` :
+             f.decision === "not_book" ? "not a book" : "skipped"}
+          </span>
+        )}
+        {f.kind === "ebook" && (
+          <a className="link" href={`#/review/${f.id}`}>
+            review
+          </a>
+        )}
         <button className="link" onClick={() => setOpen(!open)}>
           {open ? "less" : "details"}
         </button>
@@ -193,10 +204,17 @@ export default function Ingest() {
       </p>
       {error && <div className="notice error">{error}</div>}
 
+      {stats?.review_queue > 0 && (
+        <a className="notice rv-cta" href="#/review">
+          <strong>{formatNumber(stats.review_queue)}</strong> file{stats.review_queue === 1 ? "" : "s"} need a decision.
+          Review them →
+        </a>
+      )}
+
       <div className="tiles">
         <div className="tile">
           <div className="tile-num">{formatNumber(stats?.files)}</div>
-          <div className="tile-label">files</div>
+          <div className="tile-label">files · {formatNumber(stats?.ready)} ready to import</div>
         </div>
         <div className="tile">
           <div className="tile-num">{formatNumber(b.matched)}</div>

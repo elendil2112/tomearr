@@ -175,7 +175,30 @@ def _migrate_5(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5]  # MIGRATIONS[i] upgrades version i+1 to i+2
+def _migrate_6(conn: sqlite3.Connection) -> None:
+    """Phase 5: human review decisions on ingest files, kept apart from the automatic match, plus an undo log."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(ingest_files)")}
+    for name, ddl in (
+        ("decision", "TEXT"),             # NULL (pending) | accepted | not_book | skipped
+        ("decided_work_key", "TEXT"),     # the work you accepted (may differ from the automatic match)
+        ("override_json", "TEXT"),        # fields you edited: title, authors, series, series_index, isbn, language
+        ("decided_at", "TEXT"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE ingest_files ADD COLUMN {name} {ddl}")
+    conn.executescript("""
+    CREATE INDEX IF NOT EXISTS idx_ingest_decision ON ingest_files(decision);
+    CREATE TABLE IF NOT EXISTS review_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id INTEGER NOT NULL,
+        before_json TEXT NOT NULL,        -- decision fields before the change, for undo
+        action TEXT NOT NULL,
+        at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """)
+
+
+MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5, _migrate_6]  # MIGRATIONS[i] upgrades version i+1 to i+2
 SCHEMA_VERSION = 1 + len(MIGRATIONS)
 
 

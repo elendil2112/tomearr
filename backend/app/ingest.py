@@ -254,7 +254,12 @@ VALUES(:path, :size, :mtime_ns, :sha256, :kind, :format, :drm, :drm_detail, :met
 ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns, sha256=excluded.sha256,
     kind=excluded.kind, format=excluded.format, drm=excluded.drm, drm_detail=excluded.drm_detail,
     meta_json=excluded.meta_json, meta_source=excluded.meta_source, sidecar_json=excluded.sidecar_json,
-    entries_json=excluded.entries_json, error=excluded.error, scanned_at=excluded.scanned_at
+    entries_json=excluded.entries_json, error=excluded.error, scanned_at=excluded.scanned_at,
+    -- a review decision belongs to the exact file it was made on: new contents, new decision
+    decision=CASE WHEN excluded.sha256 IS ingest_files.sha256 THEN ingest_files.decision END,
+    decided_work_key=CASE WHEN excluded.sha256 IS ingest_files.sha256 THEN ingest_files.decided_work_key END,
+    override_json=CASE WHEN excluded.sha256 IS ingest_files.sha256 THEN ingest_files.override_json END,
+    decided_at=CASE WHEN excluded.sha256 IS ingest_files.sha256 THEN ingest_files.decided_at END
 """
 MATCH_SQL = ("UPDATE ingest_files SET title=:title, authors=:authors, isbn=:isbn, match_source=:match_source, "
              "work_key=:work_key, match_method=:match_method, match_confidence=:match_confidence, "
@@ -339,14 +344,24 @@ def scan(conn: sqlite3.Connection, settings, progress, cancelled, full: bool = F
 
 # --- queries for the API ----------------------------------------------------------------------------------------
 
+# Files waiting for a person: the matcher wasn't sure, and nobody has decided yet.
+QUEUE_SQL = "bucket IN ('review', 'unmatched') AND decision IS NULL AND kind = 'ebook'"
+# Files the import step (Phase 6) may take: accepted by you, or matched confidently and not overruled.
+READY_SQL = ("bucket NOT IN ('duplicate', 'drm', 'archive', 'comic', 'error') AND kind = 'ebook' AND "
+             "(decision = 'accepted' OR (decision IS NULL AND bucket = 'matched'))")
+
+
 def stats(conn: sqlite3.Connection) -> dict:
     by = {b: 0 for b in BUCKETS}
     for b, n in conn.execute("SELECT bucket, COUNT(*) FROM ingest_files GROUP BY bucket"):
         by[b or "unmatched"] = n
     formats = {f: n for f, n in conn.execute(
         "SELECT format, COUNT(*) FROM ingest_files WHERE format IS NOT NULL GROUP BY format ORDER BY 2 DESC")}
+    dec = {d or "pending": n for d, n in conn.execute("SELECT decision, COUNT(*) FROM ingest_files GROUP BY decision")}
     return {
-        "files": sum(by.values()), "buckets": by, "formats": formats,
+        "files": sum(by.values()), "buckets": by, "formats": formats, "decisions": dec,
+        "review_queue": conn.execute(f"SELECT COUNT(*) FROM ingest_files WHERE {QUEUE_SQL}").fetchone()[0],
+        "ready": conn.execute(f"SELECT COUNT(*) FROM ingest_files WHERE {READY_SQL}").fetchone()[0],
         "owned": conn.execute("SELECT COUNT(*) FROM ingest_files WHERE owned_formats IS NOT NULL "
                               "AND bucket != 'duplicate'").fetchone()[0],
         "scanned_at": db.get_meta(conn, "ingest_scanned_at"),
@@ -355,24 +370,32 @@ def stats(conn: sqlite3.Connection) -> dict:
     }
 
 
-def list_files(conn, bucket: str = "all", q: str = "", offset: int = 0, limit: int = 100) -> dict:
+DECISION_FILTERS = {"pending": "f.decision IS NULL", "accepted": "f.decision = 'accepted'",
+                    "not_book": "f.decision = 'not_book'", "skipped": "f.decision = 'skipped'"}
+
+
+def list_files(conn, bucket: str = "all", q: str = "", offset: int = 0, limit: int = 100,
+               decision: str | None = None) -> dict:
     where, args = [], []
     if bucket != "all":
         where.append("f.bucket = ?")
         args.append(bucket)
+    if decision:
+        where.append(DECISION_FILTERS[decision])
     for word in matcher.fold(q).split()[:8]:
         where.append("(lower(f.path) LIKE ? OR lower(coalesce(f.title,'')) LIKE ? OR lower(coalesce(f.authors,'')) LIKE ?)")
         args += [f"%{word}%"] * 3
     w = ("WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(f"SELECT COUNT(*) FROM ingest_files f {w}", args).fetchone()[0]
     rows = conn.execute(
-        f"SELECT f.*, w.title AS work_title, w.first_publish_year AS work_year FROM ingest_files f "
-        f"LEFT JOIN works w ON w.ol_key = f.work_key {w} ORDER BY f.path COLLATE NOCASE LIMIT ? OFFSET ?",
+        f"SELECT f.*, w.title AS work_title, w.first_publish_year AS work_year, dw.title AS decided_title "
+        f"FROM ingest_files f LEFT JOIN works w ON w.ol_key = f.work_key "
+        f"LEFT JOIN works dw ON dw.ol_key = f.decided_work_key {w} ORDER BY f.path COLLATE NOCASE LIMIT ? OFFSET ?",
         (*args, limit, offset)).fetchall()
     items = []
     for r in rows:
         d = dict(r)
-        for k in ("meta_json", "sidecar_json", "candidates_json", "entries_json"):
+        for k in ("meta_json", "sidecar_json", "candidates_json", "entries_json", "override_json"):
             d[k[:-5]] = orjson.loads(d.pop(k)) if d.get(k) else None
         d["issues"] = [i for i in (d.get("issues") or "").split(",") if i]
         d["owned_formats"] = [x for x in (d.get("owned_formats") or "").split(",") if x]
