@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import orjson
 
-from . import db, ol_import
+from . import db, library, ol_import
 from .config import DUMP_URL, KINDS, Settings
 
 
@@ -138,7 +138,7 @@ class JobRunner:
         status, message = "done", None
         try:
             self._dispatch(conn, job["kind"], params, progress, cancelled)
-        except (JobCancelled, ol_import.ImportCancelled):
+        except (JobCancelled, ol_import.ImportCancelled, library.SyncCancelled):
             status, message = "cancelled", "Cancelled"
         except Exception as exc:
             status, message = "failed", f"{type(exc).__name__}: {exc}"
@@ -178,5 +178,7 @@ class JobRunner:
                     ol_import.import_signals(conn, path, k, progress, cancelled)
         elif kind == "index":
             ol_import.build_indexes(conn, progress)
+        elif kind == "library_sync":
+            library.sync(conn, s.config_dir / "cache", progress, cancelled, rematch=params.get("rematch", False))
         else:
             raise ValueError(f"unknown job kind: {kind}")

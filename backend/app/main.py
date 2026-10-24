@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, isbn, search
+from . import db, isbn, library, search
 from .config import KINDS, get_settings
 from .jobs import JobRunner
 
@@ -26,10 +26,23 @@ class ImportRequest(BaseModel):
 
 class SettingsBody(BaseModel):
     language: str | None = None
+    calibre_path: str | None = None
+
+
+class LibraryTest(BaseModel):
+    path: str | None = None
+
+
+class SyncRequest(BaseModel):
+    rematch: bool = False
+
+
+class MatchBody(BaseModel):
+    work_key: str | None = None
 
 
 LANG_RE = re.compile(r"^(all|[a-z]{3})$")
-DEFAULT_SETTINGS = {"language": "eng"}
+DEFAULT_SETTINGS = {"language": "eng", "calibre_path": library.DEFAULT_CALIBRE_PATH}
 
 
 class DownloadRequest(BaseModel):
@@ -160,6 +173,11 @@ def create_app() -> FastAPI:
                 if not LANG_RE.match(lang):
                     raise HTTPException(400, "language must be a 3-letter MARC code (e.g. eng) or 'all'")
                 db.set_meta(conn, "setting_language", lang)
+            if body.calibre_path is not None:
+                p = body.calibre_path.strip().rstrip("/") or "/"
+                if not p.startswith("/"):
+                    raise HTTPException(400, "Calibre path must be an absolute path inside the container, e.g. /calibre")
+                db.set_meta(conn, "setting_calibre_path", p)
             return get_settings_(conn)
         finally:
             conn.close()
@@ -171,7 +189,7 @@ def create_app() -> FastAPI:
             lang = (lang or get_settings_(conn)["language"]).lower()
             if not LANG_RE.match(lang):
                 raise HTTPException(400, "bad language code")
-            return search.search_works(conn, q, limit, lang=lang)
+            return library.attach_owned(conn, search.search_works(conn, q, limit, lang=lang))
         finally:
             conn.close()
 
@@ -181,7 +199,9 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "not a valid ISBN-10 or ISBN-13")
         conn = conn_()
         try:
-            return search.lookup_isbn(conn, value)
+            r = search.lookup_isbn(conn, value)
+            library.attach_owned(conn, r["works"])
+            return r
         finally:
             conn.close()
 
@@ -192,6 +212,10 @@ def create_app() -> FastAPI:
             w = search.get_work(conn, key)
             if not w:
                 raise HTTPException(404, "work not found")
+            library.attach_owned(conn, [w])
+            w["library_books"] = [dict(r) for r in conn.execute(
+                "SELECT calibre_id, title, authors, formats, match_method, match_confidence FROM library_books "
+                "WHERE work_key=? ORDER BY calibre_id", (key,))]
             return w
         finally:
             conn.close()
@@ -203,7 +227,65 @@ def create_app() -> FastAPI:
             a = search.get_author(conn, key)
             if not a:
                 raise HTTPException(404, "author not found")
+            library.attach_owned(conn, a["works"])
             return a
+        finally:
+            conn.close()
+
+    # --- library (read-only mirror of Calibre) ------------------------------
+    @app.post("/api/library/test")
+    def library_test(body: LibraryTest):
+        conn = conn_()
+        try:
+            path = (body.path or "").strip() or library.calibre_path(conn)
+        finally:
+            conn.close()
+        return library.test_connection(path, settings.config_dir / "cache" / "test")
+
+    @app.post("/api/library/sync")
+    def library_sync(body: SyncRequest):
+        return {"job_id": runner.submit("library_sync", {"rematch": body.rematch})}
+
+    @app.get("/api/library/stats")
+    def library_stats():
+        conn = conn_()
+        try:
+            return library.stats(conn)
+        finally:
+            conn.close()
+
+    @app.get("/api/library")
+    def library_list(q: str = "", filter: str = "all", offset: int = Query(0, ge=0),
+                     limit: int = Query(100, ge=1, le=500)):
+        if filter not in library.FILTERS:
+            raise HTTPException(400, "unknown filter")
+        conn = conn_()
+        try:
+            return library.list_books(conn, q, filter, offset, limit)
+        finally:
+            conn.close()
+
+    @app.put("/api/library/{calibre_id}/match")
+    def library_set_match(calibre_id: int, body: MatchBody):
+        conn = conn_()
+        try:
+            try:
+                row = library.set_match(conn, calibre_id, body.work_key)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+            if row is None:
+                raise HTTPException(404, "book not in library")
+            return row
+        finally:
+            conn.close()
+
+    @app.delete("/api/library/{calibre_id}/match")
+    def library_clear_match(calibre_id: int):
+        conn = conn_()
+        try:
+            if not library.clear_manual(conn, calibre_id):
+                raise HTTPException(404, "book not in library")
+            return {"ok": True}
         finally:
             conn.close()
 

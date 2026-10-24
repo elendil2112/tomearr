@@ -33,6 +33,18 @@ export const api = {
   author: (key) => request(`/api/authors/${encodeURIComponent(key)}`),
   work: (key) => request(`/api/works/${encodeURIComponent(key)}`),
   isbn: (value) => request(`/api/isbn/${encodeURIComponent(value)}`),
+  library: ({ q = "", filter = "all", offset = 0, limit = 200 } = {}) =>
+    request(`/api/library?q=${encodeURIComponent(q)}&filter=${filter}&offset=${offset}&limit=${limit}`),
+  libraryStats: () => request("/api/library/stats"),
+  librarySync: (rematch = false) => post("/api/library/sync", { rematch }),
+  libraryTest: (path) => post("/api/library/test", { path }),
+  setMatch: (id, workKey) =>
+    request(`/api/library/${id}/match`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ work_key: workKey }),
+    }),
+  clearMatch: (id) => request(`/api/library/${id}/match`, { method: "DELETE" }),
   settings: () => request("/api/settings"),
   saveSettings: (body) =>
     request("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),

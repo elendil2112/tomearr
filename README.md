@@ -18,7 +18,7 @@ The full phased plan lives in the project notes; in short:
 - [x] **Phase 1: catalog.** Dump downloader, streaming importer, FTS5 search, React UI.
 - [x] **Phase 2: catalog quality.** Editions and ISBNs, edition counts, ratings and reading-log popularity,
       popularity-aware ranking, language filter, ISBN lookup, work detail page.
-- [ ] **Phase 3: library.** Read your Calibre library (read-only) and match it to catalog works.
+- [x] **Phase 3: library.** Read your Calibre library (read-only) and match it to catalog works.
 - [ ] **Phases 4–6: ingest.** Scan an ingest folder, match files, review queue, convert to EPUB with
       `ebook-convert`, add to Calibre with `calibredb`. Dry run by default, with an undo log. DRM is flagged,
       never stripped.
@@ -38,6 +38,7 @@ stays clean. Then, go to **Catalog**, and click **Download & build catalog**.
 |---|---|
 | `/config` | SQLite database (`tomearr.db`). Put this on cache/SSD. |
 | `/data` | Downloaded dump files in `/data/dumps`. |
+| `/calibre` | Your Calibre library (the folder containing `metadata.db`). Mount it read-only (`:ro`). |
 
 Already have the dumps (the Open Library site offers torrents)? Put them in `/data/dumps` named
 `ol_dump_<kind>.txt.gz` (no date, e.g. `ol_dump_editions.txt.gz`), then click **Import only**.
@@ -61,6 +62,23 @@ Catalog page) keeps only editions with an ISBN and/or in chosen languages. Editi
 always kept, since many ebooks leave it blank.
 
 Imports show live progress as a percentage of the compressed file read; downloads resume if interrupted.
+
+## Your library (Calibre)
+
+Mount your Calibre library at `/calibre` (the compose file mounts `/mnt/user/data/books` read-only; change it to
+your path), check it under **Settings → Test connection**, then **Library → Sync now**.
+
+- Tomearr never opens Calibre's `metadata.db` directly. It copies it (and any `-wal` file) into
+  `/config/cache`, checks the copy is consistent, and reads only the copy. It takes no lock on your library and
+  is safe while Calibre, the content server or Calibre-Web is running. If Calibre writes during the copy it
+  retries.
+- Each book is matched to a catalog work: Calibre's `openlibrary` identifier first, then ISBN, then title plus
+  author (fuzzy). Matches show their method and a confidence; **Check match** lists anything under 90%.
+- Use **fix** on a book to pick the right work or mark it "not in the catalog". Manual matches are never
+  changed by a sync; "Back to automatic" undoes one.
+- Re-syncing only re-matches books that changed in Calibre or are still unmatched (or everything, with
+  **Sync and rematch all**). Books deleted from Calibre disappear from Tomearr's list.
+- Search results, author pages and work pages show an **Owned** badge with the formats you have.
 
 ## How search works
 
@@ -86,7 +104,12 @@ Imports show live progress as a percentage of the compressed file read; download
 | `GET /api/isbn/{isbn}` | editions and works for an ISBN |
 | `GET /api/works/{key}` | work detail with editions, ISBNs, ratings, reader counts |
 | `GET /api/authors/{key}` | author with works |
-| `GET/PUT /api/settings` | `{"language": "eng"}` |
+| `GET/PUT /api/settings` | `{"language": "eng", "calibre_path": "/calibre"}` |
+| `POST /api/library/test` | check a Calibre folder (`{"path": ...}`, defaults to the setting) |
+| `POST /api/library/sync` | sync job (`{"rematch": true}` re-matches everything except manual matches) |
+| `GET /api/library?q=&filter=&offset=&limit=` | owned books; `filter`: all, matched, unmatched, low, not_epub, manual |
+| `GET /api/library/stats` | counts by match method and format |
+| `PUT/DELETE /api/library/{calibre_id}/match` | set a manual match (`{"work_key": "OL…W"}` or `null`) / clear it |
 | `POST /api/catalog/{download,import,build,reindex}` | catalog jobs; import/build take `kinds`, `require_author`, `edition_languages`, `isbn_only` |
 
 ## Develop
@@ -104,9 +127,9 @@ cd frontend && npm install && npm run dev
 ## Layout
 
 ```
-backend/app/    FastAPI app, job runner, dump importer, search
+backend/app/    FastAPI app, job runner, dump importer, search, Calibre reader, matcher
 backend/tests/  pytest suite using small synthetic dumps
-frontend/src/   React UI (Search, Author, Work, Catalog pages)
+frontend/src/   React UI (Search, Author, Work, Library, Catalog, Settings pages)
 Dockerfile      builds the UI, then a slim Python runtime
 ```
 

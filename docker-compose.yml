@@ -10,7 +10,8 @@ services:
       - /mnt/user/appdata/tomearr/config:/config
       # Downloaded Open Library dumps (~13 GB with editions). Can live on the array.
       - /mnt/user/appdata/tomearr/data:/data
+      # Your Calibre library (the folder with metadata.db). Read-only: Tomearr only reads it until Phase 6.
+      - /mnt/user/data/books:/calibre:ro
       # Added in later phases:
-      # - /mnt/user/books/ingest:/ingest
-      # - /mnt/user/books/calibre:/calibre
+      # - /mnt/user/data/ingest:/ingest
     restart: unless-stopped

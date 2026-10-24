@@ -7,6 +7,7 @@ const KIND_LABEL = {
   download: "Download dumps",
   import: "Import into database",
   index: "Build search index",
+  library_sync: "Sync Calibre library",
 };
 
 const DUMP_INFO = {
@@ -29,15 +30,18 @@ function describe(job) {
     return `${p.phase}: ${formatNumber(p.lines)} lines read, ${formatNumber(p.kept)} kept${pct(p)}`;
   }
   if (job.kind === "index" && p.step) return p.step;
+  if (job.kind === "library_sync" && p.total) return `${formatNumber(p.done)} of ${formatNumber(p.total)} books`;
+  if (job.kind === "library_sync" && p.step) return p.step;
   return "";
 }
 
 function fraction(job) {
   const p = job.progress || {};
+  if (job.kind === "library_sync" && p.total) return Math.min(1, (p.done || 0) / p.total);
   return (job.kind === "download" || job.kind === "import") && p.total ? Math.min(1, p.bytes / p.total) : null;
 }
 
-function JobRow({ job, onCancel }) {
+export function JobRow({ job, onCancel }) {
   const active = ACTIVE.includes(job.status);
   const frac = fraction(job);
   return (
