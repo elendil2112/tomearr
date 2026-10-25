@@ -334,3 +334,4 @@ button.mini:hover { border-color: var(--accent); }
 @media (max-width: 640px) {
   .row .why { display: none; }
 }
+.plan-group h3 button.mini { margin-left: auto; font-weight: 500; }
