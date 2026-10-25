@@ -8,6 +8,7 @@ from app import db, identity, importer, library, monitor, review
 from samples import make_epub, make_mobi
 from test_catalog import _no, _noop, conn  # noqa: F401
 from test_phase6 import _books, _cdb, _run, _scan, calibre  # noqa: F401
+from test_phase6 import pytestmark as needs_calibre
 
 TOLKIEN, SHAKESPEARE = "OL26320A", "OL9388A"
 
@@ -61,6 +62,7 @@ def test_wanted_ignores_books_owned_under_another_record(conn, env):  # noqa: F8
     assert "OL990W" not in {w["ol_key"] for w in monitor.wanted(conn)}
 
 
+@needs_calibre
 @pytest.mark.parametrize("calibre", ["direct"], indirect=True)
 def test_file_for_a_book_calibre_has_under_another_record(conn, calibre, env):  # noqa: F811
     """Calibre has Hamlet (MOBI, matched to OL2W). A file matched to another Hamlet record adds its EPUB to that
@@ -86,6 +88,7 @@ def test_file_for_a_book_calibre_has_under_another_record(conn, calibre, env):  
     assert "EPUB" in _books(calibre)[hamlet]["formats"]
 
 
+@needs_calibre
 @pytest.mark.parametrize("calibre", ["direct"], indirect=True)
 def test_two_records_one_run_imports_the_best_version(conn, calibre, env):  # noqa: F811
     _work(conn, "OL997W", "The Lord of the Rings (50th Anniversary Edition)", TOLKIEN)
@@ -111,6 +114,7 @@ def test_two_records_one_run_imports_the_best_version(conn, calibre, env):  # no
     assert not any(d.iterdir())
 
 
+@needs_calibre
 @pytest.mark.parametrize("calibre", ["direct"], indirect=True)
 def test_duplicates_already_in_calibre(conn, calibre, env):  # noqa: F811
     src = env / "dupes"
