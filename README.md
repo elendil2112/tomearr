@@ -164,6 +164,11 @@ book or EPUB comes out of Calibre, replaced formats go back in, and the original
 - **PDFs** need your OK each time: convert, look at the result (text sample and a download link), then approve.
 - **Archives** (zip, rar, 7z) are unpacked into a folder next to them; the next scan picks up what was inside.
 - **Duplicates** of a file already in Calibre go to the trash (a setting).
+- **Leftovers:** once a book leaves its folder, everything else there goes too if it's only leftovers (OPF,
+  images, `.nfo`/`.sfv`, short `.txt`, OS clutter, empty subfolders), and so do parent folders that end up empty.
+  A folder that still has a book, an archive, a partial download or any file type Tomearr doesn't recognise
+  (an audiobook's `.mp3`s, say) is left alone. The plan also lists older leftover-only folders to clear out.
+  Leftovers follow the trash setting and come back if you undo.
 - **Already have it** (a different file of a book Calibre has as EPUB): **compare** shows both side by side
   (cover, words, chapters, table of contents, images, fonts, EPUB version, whether each looks publisher-made or
   converted/OCR'd, metadata, and the same passage from both) with a suggestion. **Keep Calibre's** trashes the

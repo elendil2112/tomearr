@@ -7,6 +7,7 @@ const KIND = {
   add_format: ["Add EPUB", "EPUB added to a book you already have"],
   already_have: ["Already have it", "Calibre already has this book as EPUB"],
   replace: ["Replace in Calibre", "EPUB in Calibre replaced with this one"],
+  cleanup: ["Leftover folders", "Leftovers removed (OPF, images, short txt, empty folders)"],
   delete_duplicate: ["Duplicate", "Identical to a file already in Calibre"],
   unpack: ["Unpack", "Archive unpacked into the ingest folder"],
   pdf_convert: ["Convert PDF", "PDF converted for you to check"],
@@ -16,7 +17,7 @@ const KIND = {
   set_cover: ["Cover", "Cover added from Open Library"],
 };
 const ORDER = ["add", "add_format", "replace", "convert_existing", "pdf_convert", "unpack", "delete_duplicate", "already_have",
-  "pdf_waiting", "pdf_hold"];
+  "cleanup", "pdf_waiting", "pdf_hold"];
 
 const CHOICE_LABEL = { calibre: "keeping Calibre's", ingest: "using this one", skip: "deciding later" };
 
@@ -293,6 +294,8 @@ function History({ refreshKey }) {
                     {r.removed?.length ? ` · removed ${r.removed.map((x) => x.format).join(", ")}` : ""}
                     {r.meta?.cover_added ? " · cover from Open Library" : ""}
                     {r.meta?.calibre_cover_set ? " · cover set in Calibre" : ""}
+                    {r.meta?.leftovers?.length > 0 && r.action !== "cleanup" ? ` · ${r.meta.leftovers.length} leftover file${r.meta.leftovers.length === 1 ? "" : "s"} cleaned up` : ""}
+                    {r.action === "cleanup" && r.meta?.leftovers ? ` · ${r.meta.leftovers.length} file${r.meta.leftovers.length === 1 ? "" : "s"}` : ""}
                     {r.meta?.no_undo ? " · original deleted" : ""}
                     {r.meta?.kept_formats?.length ? ` · kept ${r.meta.kept_formats.join(", ")} (couldn't back it up)` : ""}
                     {r.error ? ` · ${r.error}` : ""}
