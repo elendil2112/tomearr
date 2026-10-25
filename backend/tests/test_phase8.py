@@ -35,6 +35,9 @@ RESULTS = [
     _rel("J R R Tolkien The Children of Hurin mobi", protocol="usenet"),
     _rel("The Children of Hurin - Tolkien.pdf", seeders=0),
     _rel("Tolkien - The Children of Hurin (magnet)", link=False, magnet=MAGNET, seeders=3),
+    # some indexers: no download link, and the "magnet" link is a Prowlarr address that redirects to the magnet
+    _rel("Tolkien - The Children of Hurin (proxied magnet)", link=False, seeders=4,
+         magnet="http://prowlarr:9696/3/download?link=proxied&file=Hurin.epub"),
 ]
 
 
@@ -64,7 +67,7 @@ class Fake:
                 self.searches.append((q["query"][0], q["categories"]))
                 return httpx.Response(200, json=RESULTS)
             if u.path.endswith("/download"):
-                if self.redirect_to_magnet:
+                if self.redirect_to_magnet or "link=proxied" in str(u):
                     return httpx.Response(302, headers={"location": MAGNET})
                 return httpx.Response(200, content=NZB if "/4/" in u.path or "mobi" in str(u) else TORRENT)
         if u.host == "deluge":
@@ -204,6 +207,10 @@ def test_grab_magnet_and_redirect(setup, http, fake):
     mag = next(r for r in res["releases"] if "(magnet)" in r["title"])
     dl = clients.Deluge("http://deluge:8112", "secret", http)
     g = grabs.grab(setup, HURIN, mag["id"], px=_px(setup, http), deluge=dl)
+    assert g["client_id"] == "abcdef0123456789abcdef0123456789abcdef01"
+    proxied = next(r for r in res["releases"] if "(proxied magnet)" in r["title"])
+    fake.torrents.clear()
+    g = grabs.grab(setup, HURIN, proxied["id"], px=_px(setup, http), deluge=dl)
     assert g["client_id"] == "abcdef0123456789abcdef0123456789abcdef01"
     # an indexer that redirects its download link to a magnet; the same torrent again is "already in session"
     fake.redirect_to_magnet = True
