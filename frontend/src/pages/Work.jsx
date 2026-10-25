@@ -53,6 +53,8 @@ export default function Work({ olKey }) {
         </div>
       </div>
 
+      <WorkMonitor work={work} onChange={setWork} />
+
       {work.library_books?.length > 0 && (
         <div className="notice ok-notice">
           In your library:{" "}
@@ -156,5 +158,40 @@ export default function Work({ olKey }) {
         )}
       </div>
     </section>
+  );
+}
+
+const STATUS_TEXT = {
+  wanted: "Wanted",
+  in_ingest: "Wanted, and a file for it is waiting in the ingest folder",
+  ignored: "Ignored",
+  filtered: "Not wanted: filtered out by your profile",
+  unmonitored: "Not wanted",
+};
+
+function WorkMonitor({ work, onChange }) {
+  const s = work.monitor_status;
+  if (!s || s.status === "owned") return null;
+  const set = async (state) => {
+    await api.setWorkState(work.ol_key, state);
+    onChange({ ...work, monitor_status: (await api.work(work.ol_key)).monitor_status });
+  };
+  const wanted = s.status === "wanted" || s.status === "in_ingest";
+  return (
+    <div className={`notice ${wanted ? "ok-notice" : ""}`} style={wanted ? {} : { background: "var(--card)", borderColor: "var(--line)" }}>
+      <b>{STATUS_TEXT[s.status]}</b>
+      {s.status !== "in_ingest" && s.why && <span className="muted"> ({s.why})</span>}
+      <span style={{ marginLeft: 12 }}>
+        {s.override ? (
+          <button className="mini" onClick={() => set(null)}>
+            {s.override === "wanted" ? "Don’t want" : "Unignore"}
+          </button>
+        ) : wanted ? (
+          <button className="mini" onClick={() => set("ignored")}>Ignore</button>
+        ) : (
+          <button className="mini" onClick={() => set("wanted")}>Want this book</button>
+        )}
+      </span>
+    </div>
   );
 }

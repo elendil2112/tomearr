@@ -234,7 +234,27 @@ def _migrate_8(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE ingest_files ADD COLUMN compare_choice TEXT")
 
 
-MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5, _migrate_6, _migrate_7, _migrate_8]  # MIGRATIONS[i] upgrades version i+1 to i+2
+def _migrate_9(conn: sqlite3.Connection) -> None:
+    """Phase 7: monitoring. Which authors you follow, per-book overrides, and the metadata profile."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(monitored_authors)")}
+    if "monitor_from" not in cols:
+        # for 'future' monitoring: works already in the catalog when you started don't count
+        conn.execute("ALTER TABLE monitored_authors ADD COLUMN monitor_from TEXT")
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS author_baseline (       -- works an author had when 'future' monitoring started
+        author_key TEXT NOT NULL,
+        work_key TEXT NOT NULL,
+        PRIMARY KEY (author_key, work_key)
+    ) WITHOUT ROWID;
+    CREATE TABLE IF NOT EXISTS work_status (           -- your per-book choices; absent = follow the author
+        work_key TEXT PRIMARY KEY,
+        state TEXT NOT NULL,                           -- wanted | ignored
+        at TEXT NOT NULL DEFAULT (datetime('now'))
+    ) WITHOUT ROWID;
+    """)
+
+
+MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5, _migrate_6, _migrate_7, _migrate_8, _migrate_9]  # MIGRATIONS[i] upgrades version i+1 to i+2
 SCHEMA_VERSION = 1 + len(MIGRATIONS)
 
 

@@ -95,6 +95,8 @@ export default function Settings() {
 
       <IngestSettings settings={settings} save={save} saved={saved} />
 
+      <ProfileSettings settings={settings} save={save} saved={saved} />
+
       <div className="card">
         <h2>Search</h2>
         <label className="field">
@@ -266,6 +268,51 @@ function CalibreWriteSettings({ settings, save, saved }) {
         saved={saved === "trash"}
         hint="Originals and replaced formats are kept this long so any import can be undone, then deleted for good. 0 deletes them as soon as Calibre confirms the import (those imports can't be undone)."
       />
+    </div>
+  );
+}
+
+function ProfileSettings({ settings, save, saved }) {
+  const [langs, setLangs] = useState(settings.profile_languages);
+  useEffect(() => setLangs(settings.profile_languages), [settings.profile_languages]);
+  return (
+    <div className="card">
+      <h2>Which books count as wanted</h2>
+      <p className="muted small-print">
+        Open Library lists everything under an author: translations, study guides, box sets, one-off reprints. For
+        monitored authors, only books that pass these rules are wanted. Books you mark Want yourself always are.
+      </p>
+      <label className="field">
+        <span>Languages (MARC codes, comma-separated; blank = any)</span>
+        <span className="inline-field">
+          <input value={langs} onChange={(e) => setLangs(e.target.value)} spellCheck={false} placeholder="eng" className="wide" />
+          <button disabled={langs === settings.profile_languages} onClick={() => save({ profile_languages: langs }, "plangs")}>
+            Save
+          </button>
+          {saved === "plangs" && <span className="ok small-print">Saved</span>}
+        </span>
+        <span className="muted small-print">
+          {LANGUAGES.slice(0, 8)
+            .map(([c, n]) => `${c} = ${n}`)
+            .join(", ")}
+          …
+        </span>
+      </label>
+      <NumberSetting
+        label="At least this many editions"
+        value={settings.profile_min_editions}
+        onSave={(v) => save({ profile_min_editions: v }, "peds")}
+        saved={saved === "peds"}
+        hint="Single-edition works are often duplicates or obscure printings. Books from the last two years only need one, since new releases haven’t had time to collect more."
+      />
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={settings.profile_exclude_collections}
+          onChange={(e) => save({ profile_exclude_collections: e.target.checked }, "pcoll")}
+        />
+        Skip collections, box sets, omnibuses and study guides
+      </label>
     </div>
   );
 }
