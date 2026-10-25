@@ -97,6 +97,8 @@ export default function Settings() {
 
       <ProfileSettings settings={settings} save={save} saved={saved} />
 
+      <DownloadSettings settings={settings} save={save} saved={saved} />
+
       <div className="card">
         <h2>Search</h2>
         <label className="field">
@@ -313,6 +315,149 @@ function ProfileSettings({ settings, save, saved }) {
         />
         Skip collections, box sets, omnibuses and study guides
       </label>
+    </div>
+  );
+}
+
+function TextSetting({ label, value, onSave, saved, placeholder, hint, secret = false, isSet = false }) {
+  const [v, setV] = useState(secret ? "" : value || "");
+  useEffect(() => setV(secret ? "" : value || ""), [value, secret, isSet]);
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <span className="inline-field">
+        <input
+          type={secret ? "password" : "text"}
+          className="wide"
+          value={v}
+          placeholder={secret ? (isSet ? "•••••••• (saved; type to replace)" : "not set") : placeholder}
+          onChange={(e) => setV(e.target.value)}
+          spellCheck={false}
+          autoComplete="off"
+        />
+        <button disabled={secret ? !v : v === (value || "")} onClick={() => onSave(v)}>
+          Save
+        </button>
+        {saved && <span className="ok small-print">Saved</span>}
+      </span>
+      {hint && <span className="muted small-print">{hint}</span>}
+    </label>
+  );
+}
+
+function ClientTest({ client, label }) {
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    setRes(null);
+    try {
+      setRes(await api.downloadsTest(client));
+    } catch (e) {
+      setRes({ ok: false, message: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  let msg = null;
+  if (res?.ok) {
+    if (client === "prowlarr") {
+      const t = res.indexers.filter((i) => i.protocol === "torrent").length;
+      const u = res.indexers.filter((i) => i.protocol === "usenet").length;
+      msg = `OK: Prowlarr ${res.version}, ${t} torrent and ${u} usenet indexers enabled.`;
+    } else if (client === "deluge") {
+      msg = `OK: connected to Deluge${res.version ? ` ${res.version}` : ""}${res.label_plugin ? "" : ". The Label plugin is off, so labels won't be set."}`;
+    } else {
+      msg = `OK: SABnzbd ${res.version}. Categories: ${(res.categories || []).join(", ")}.`;
+    }
+  }
+  return (
+    <>
+      <div className="actions">
+        <button onClick={run} disabled={busy}>
+          {busy ? "Testing…" : `Test ${label}`}
+        </button>
+      </div>
+      {res && (res.ok ? <div className="notice ok-notice">{msg}</div> : <div className="notice error">{res.message}</div>)}
+    </>
+  );
+}
+
+function DownloadSettings({ settings, save, saved }) {
+  const t = (key, label, extra = {}) => (
+    <TextSetting
+      label={label}
+      value={settings[key]}
+      isSet={settings[`${key}_set`]}
+      onSave={(v) => save({ [key]: v }, key)}
+      saved={saved === key}
+      {...extra}
+    />
+  );
+  return (
+    <div className="card">
+      <h2>Indexers and download clients</h2>
+      <p className="muted small-print">
+        Tomearr searches your indexers through Prowlarr, sends torrents to Deluge and NZBs to SABnzbd, then follows each
+        download. Finished downloads need to land in the ingest folder ({settings.ingest_path} inside Tomearr), where
+        they’re matched and imported like everything else.
+      </p>
+
+      <div className="client-block">
+        <h3>Prowlarr</h3>
+        {t("prowlarr_url", "Address", { placeholder: "http://192.168.0.229:9696" })}
+        {t("prowlarr_api_key", "API key", { secret: true, hint: "Prowlarr → Settings → General → API Key." })}
+        <ClientTest client="prowlarr" label="Prowlarr" />
+      </div>
+
+      <div className="client-block">
+        <h3>Deluge (torrents)</h3>
+        {t("deluge_url", "Web UI address", { placeholder: "http://192.168.0.229:8112" })}
+        {t("deluge_password", "Web UI password", { secret: true })}
+        {t("deluge_label", "Label", {
+          placeholder: "ebooks",
+          hint: "Set on every torrent Tomearr adds (needs Deluge's Label plugin). Give the label a “move completed to” folder that is your ingest folder.",
+        })}
+        {t("deluge_path", "Download folder (optional, as Deluge sees it)", {
+          placeholder: "/data/download/completed/ebooks",
+          hint: "Leave blank to use the label’s or Deluge’s own folder.",
+        })}
+        <ClientTest client="deluge" label="Deluge" />
+      </div>
+
+      <label className="check">
+        <input type="checkbox" checked={settings.keep_seeding} onChange={(e) => save({ keep_seeding: e.target.checked }, "seed")} />
+        Leave files from torrents that are still in Deluge in the ingest folder after importing them (so they keep
+        seeding); they’re removed once the torrent is gone from Deluge
+      </label>
+
+      <div className="client-block">
+        <h3>SABnzbd (usenet)</h3>
+        {t("sab_url", "Address", { placeholder: "http://192.168.0.229:8080" })}
+        {t("sab_api_key", "API key", { secret: true, hint: "SABnzbd → Config → General → API Key." })}
+        {t("sab_category", "Category", {
+          placeholder: "books",
+          hint: "Give this category a folder that is your ingest folder (SABnzbd → Config → Categories).",
+        })}
+        <ClientTest client="sabnzbd" label="SABnzbd" />
+      </div>
+
+      <div className="client-block">
+        <h3>Release rules</h3>
+        <NumberSetting
+          label="Largest release to grab (MB, 0 = no limit)"
+          value={settings.release_max_size_mb}
+          onSave={(v) => save({ release_max_size_mb: v }, "maxmb")}
+          saved={saved === "maxmb"}
+          hint="Ebooks are rarely over 50 MB; bigger releases are usually audiobooks or collections."
+        />
+        <NumberSetting
+          label="Fewest seeders for a torrent"
+          value={settings.release_min_seeders}
+          onSave={(v) => save({ release_min_seeders: v }, "seeders")}
+          saved={saved === "seeders"}
+        />
+      </div>
     </div>
   );
 }

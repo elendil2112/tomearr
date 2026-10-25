@@ -83,6 +83,12 @@ export const api = {
   setWorkState: (key, state) => put(`/api/monitor/works/${encodeURIComponent(key)}`, { state }),
   wanted: (q = "") => request(`/api/wanted?q=${encodeURIComponent(q)}`),
   wantedNew: (years = 2) => request(`/api/wanted/new?years=${years}`),
+  releases: (workKey) => request(`/api/releases/${encodeURIComponent(workKey)}`),
+  grab: (workKey, releaseId) => post("/api/grabs", { work_key: workKey, release_id: releaseId }),
+  grabs: () => request("/api/grabs"),
+  grabsRefresh: () => post("/api/grabs/refresh"),
+  grabRemove: (id) => request(`/api/grabs/${id}`, { method: "DELETE" }),
+  downloadsTest: (client) => post("/api/downloads/test", { client }),
   settings: () => request("/api/settings"),
   saveSettings: (body) =>
     request("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),

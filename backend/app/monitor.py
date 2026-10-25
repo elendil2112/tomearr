@@ -125,6 +125,8 @@ def classify(conn, works: list[dict], monitor: dict | None, baseline: set[str], 
     keys = [w["ol_key"] for w in works]
     owned = _owned(conn, keys)
     waiting = _in_ingest(conn, keys)
+    downloading = {r[0] for r in conn.execute(
+        "SELECT work_key FROM grabs WHERE state IN ('queued','downloading','completed')")}
     overrides = {}
     for i in range(0, len(keys), 500):
         chunk = keys[i:i + 500]
@@ -153,6 +155,8 @@ def classify(conn, works: list[dict], monitor: dict | None, baseline: set[str], 
             st, reason = "wanted", "monitored"
         if st == "wanted" and w["ol_key"] in waiting:
             st, reason = "in_ingest", "a file for it is waiting in the ingest folder"
+        elif st == "wanted" and w["ol_key"] in downloading:
+            st, reason = "downloading", "sent to your download client"
         w["status"], w["status_why"], w["override"] = st, reason, o
     return works
 
@@ -183,7 +187,7 @@ def author_view(conn, author_key: str) -> dict | None:
 
 
 def _count(works: list[dict]) -> dict:
-    c = {"counted": 0, "owned": 0, "wanted": 0, "in_ingest": 0, "ignored": 0, "filtered": 0, "unmonitored": 0}
+    c = {"counted": 0, "owned": 0, "wanted": 0, "in_ingest": 0, "downloading": 0, "ignored": 0, "filtered": 0, "unmonitored": 0}
     for w in works:
         c[w["status"]] += 1
         if w["status"] not in ("filtered",):
@@ -211,7 +215,7 @@ def wanted(conn, q: str = "", include_waiting: bool = True) -> list[dict]:
     for m in conn.execute("SELECT * FROM monitored_authors WHERE monitor != 'none'").fetchall():
         m = dict(m)
         for w in classify(conn, _works_of(conn, m["author_key"]), m, _baseline(conn, m["author_key"]), prof):
-            if w["status"] in ("wanted", "in_ingest"):
+            if w["status"] in ("wanted", "in_ingest", "downloading"):
                 seen.setdefault(w["ol_key"], w)
     singles = [r[0] for r in conn.execute("SELECT work_key FROM work_status WHERE state='wanted'")]
     singles = [k for k in singles if k not in seen]
@@ -220,7 +224,7 @@ def wanted(conn, q: str = "", include_waiting: bool = True) -> list[dict]:
         rows = [dict(r) for r in conn.execute(f"SELECT {WORK_COLS}, w.languages FROM works w WHERE w.ol_key IN ({marks})",
                                               singles)]
         for w in classify(conn, rows, {"monitor": "selected"}, set(), prof):
-            if w["status"] in ("wanted", "in_ingest"):
+            if w["status"] in ("wanted", "in_ingest", "downloading"):
                 seen.setdefault(w["ol_key"], w)
     works = list(seen.values())
     if not include_waiting:
@@ -257,7 +261,7 @@ def work_status(conn, work_key: str) -> dict | None:
     if not row:
         return None
     prof = profile(conn)
-    rank = {"owned": 0, "in_ingest": 1, "wanted": 2, "ignored": 3, "filtered": 4, "unmonitored": 5}
+    rank = {"owned": 0, "in_ingest": 1, "downloading": 1, "wanted": 2, "ignored": 3, "filtered": 4, "unmonitored": 5}
     best = None
     mons = [dict(m) for m in conn.execute(
         "SELECT m.* FROM monitored_authors m JOIN work_authors wa ON wa.author_key = m.author_key "

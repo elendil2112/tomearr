@@ -19,7 +19,7 @@ from pathlib import Path
 
 import orjson
 
-from . import calibre_cli, db, extract, ingest, leftovers, library, review
+from . import calibre_cli, db, extract, grabs, ingest, leftovers, library, review
 from .calibre_cli import Calibre, CalibreCLIError, Target
 
 DEFAULTS = {
@@ -37,9 +37,10 @@ SECRET = "calibre_password"
 NO_CONVERT = {"EPUB"}
 # Imports that deleted something; with the trash off there's nothing to put back, so they can't be undone.
 NO_UNDO_WITHOUT_TRASH = {"add", "add_format", "convert_existing", "delete_duplicate", "already_have", "unpack",
+                         "seeding_done",
                          "replace", "cleanup"}
 # After these, the original has left the ingest folder, so its folder may now hold only leftovers.
-CLEANS_UP = {"add", "add_format", "replace", "already_have", "delete_duplicate", "unpack"}
+CLEANS_UP = {"add", "add_format", "replace", "already_have", "delete_duplicate", "unpack", "seeding_done"}
 
 
 class ImportCancelled(Exception):
@@ -167,22 +168,32 @@ def plan(conn) -> dict:
 
     if setting(conn, "delete_duplicates") == "1":
         for r in conn.execute("SELECT * FROM ingest_files WHERE bucket='duplicate' AND duplicate_of LIKE 'calibre:%' "
-                              "AND (decision IS NULL OR decision != 'not_book') ORDER BY path"):
+                              "AND (decision IS NULL OR decision NOT IN ('not_book', 'kept')) ORDER BY path"):
             items.append({"key": f"file:{r['id']}", "file_id": r["id"], "path": r["path"], "format": r["format"],
                           "kind": "delete_duplicate", "select": True, "calibre_id": int(r["duplicate_of"][8:]),
                           "steps": [f"identical to a file already in Calibre (#{r['duplicate_of'][8:]}); move to the trash"]})
     for r in conn.execute("SELECT * FROM ingest_files WHERE bucket='archive' AND (decision IS NULL OR "
-                          "decision != 'not_book') ORDER BY path"):
+                          "decision NOT IN ('not_book', 'kept')) ORDER BY path"):
         entries = orjson.loads(r["entries_json"]) if r["entries_json"] else []
         items.append({"key": f"file:{r['id']}", "file_id": r["id"], "path": r["path"], "format": r["format"],
                       "kind": "unpack", "select": True,
                       "steps": [f"unpack{f' ({len(entries)} ebook files)' if entries else ''} into a folder next to it; "
                                 "the next scan picks them up", "move the archive to the trash"]})
+    seeding, reached = grabs.seeding_names(conn)
+    for r in conn.execute("SELECT * FROM ingest_files WHERE decision='kept' ORDER BY path"):
+        still = grabs.is_seeding(r["path"], seeding) or not reached
+        items.append({"key": f"file:{r['id']}", "file_id": r["id"], "path": r["path"], "format": r["format"],
+                      "kind": "seeding" if still else "seeding_done", "select": not still,
+                      "steps": ["already imported; left here while Deluge seeds it" if reached else
+                                "already imported; left here (Deluge can't be reached to check it's done seeding)"]
+                      if still else ["already imported, and the torrent is no longer in Deluge; move to the trash"]})
     root = _ingest_root(conn)
     if root.is_dir():
         settle = int(ingest.setting(conn, "ingest_settle_sec"))
         for folder, files in leftovers.sweep_candidates(root, settle):
             rel = folder.relative_to(root.resolve()).as_posix()
+            if grabs.is_seeding(rel + "/x", seeding):
+                continue
             kinds = sorted({(f.suffix.lower().lstrip(".") or f.name) for f in files})
             items.append({"key": f"dir:{rel}", "path": rel + "/", "kind": "cleanup", "select": True,
                           "files": len(files),
@@ -274,7 +285,18 @@ def _replace_old_formats(conn, cal: Calibre, cid: int, drop: list[str], trash: P
     return removed, kept
 
 
-def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path) -> dict:
+def _retire(conn, src: Path, trash: Path | None, r, seeding: set[str]) -> Path | None:
+    """The original is done with: trash it, or leave it where it is while its torrent is still seeding."""
+    if grabs.is_seeding(r["path"], seeding):
+        conn.execute("UPDATE ingest_files SET decision='kept', decided_at=datetime('now') WHERE id=?", (r["id"],))
+        return None
+    t = _move_to_trash(src, trash, r["path"])
+    conn.execute("DELETE FROM ingest_files WHERE id=?", (r["id"],))
+    return t
+
+
+def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path,
+                 seeding: set[str] = frozenset()) -> dict:
     r = conn.execute("SELECT * FROM ingest_files WHERE id=?", (it["file_id"],)).fetchone()
     root = _ingest_root(conn)
     src = root / r["path"]
@@ -287,8 +309,7 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
     kind = it["kind"]
 
     if kind == "delete_duplicate":
-        t = _move_to_trash(src, trash, r["path"])
-        conn.execute("DELETE FROM ingest_files WHERE id=?", (r["id"],))
+        t = _retire(conn, src, trash, r, seeding)
         return {"action": "delete_duplicate", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t) if t else None,
                 "calibre_id": it.get("calibre_id")}
 
@@ -300,14 +321,16 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
         old = time.time() - 3600   # extracted files count as settled, so the next scan reads them
         for f in files:
             os.utime(f, (old, old))
-        t = _move_to_trash(src, trash, r["path"])
-        conn.execute("DELETE FROM ingest_files WHERE id=?", (r["id"],))
+        t = _retire(conn, src, trash, r, seeding)
         return {"action": "unpack", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t) if t else None,
                 "meta_json": orjson.dumps({"extracted": [str(f.relative_to(root)) for f in files]}).decode()}
 
+    if kind == "seeding_done":
+        t = _retire(conn, src, trash, r, seeding)
+        return {"action": "seeding_done", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t) if t else None}
+
     if kind == "already_have":
-        t = _move_to_trash(src, trash, r["path"])
-        conn.execute("DELETE FROM ingest_files WHERE id=?", (r["id"],))
+        t = _retire(conn, src, trash, r, seeding)
         return {"action": "already_have", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t) if t else None,
                 "calibre_id": it.get("calibre_id")}
 
@@ -364,8 +387,7 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
                     cover_set = True
             except CalibreCLIError:
                 pass
-        t = _move_to_trash(src, trash, r["path"])
-        conn.execute("DELETE FROM ingest_files WHERE id=?", (r["id"],))
+        t = _retire(conn, src, trash, r, seeding)
         shutil.rmtree(stage, ignore_errors=True)
         return {"action": "replace", "path": r["path"], "sha256": r["sha256"], "source_format": r["format"],
                 "work_key": wk, "calibre_id": cid, "added_format": None,
@@ -401,8 +423,7 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
             pass
         raise
 
-    t = _move_to_trash(src, trash, r["path"])
-    conn.execute("DELETE FROM ingest_files WHERE id=?", (r["id"],))
+    t = _retire(conn, src, trash, r, seeding)
     shutil.rmtree(stage, ignore_errors=True)
     return {"action": kind, "path": r["path"], "sha256": r["sha256"], "source_format": r["format"], "work_key": wk,
             "calibre_id": cid, "added_format": "EPUB", "removed_json": orjson.dumps(removed).decode(),
@@ -462,7 +483,7 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
     """Do the selected plan items (all default-selected ones if keys is None)."""
     p = plan_library(conn) if library else plan(conn)
     items = [i for i in p["items"] if (i["key"] in keys if keys is not None else i["select"])]
-    items = [i for i in items if i["kind"] not in ("pdf_hold", "pdf_waiting")]
+    items = [i for i in items if i["kind"] not in ("pdf_hold", "pdf_waiting", "seeding")]
     needs_calibre = any(i["kind"] in ("add", "add_format", "convert_existing", "replace") for i in items)
     needs_ingest_write = any("file_id" in i or i["kind"] == "cleanup" for i in items)
     if needs_ingest_write and not os.access(_ingest_root(conn), os.W_OK):
@@ -474,6 +495,7 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
         cal.test()
     # trash_days = 0 means no trash: originals and replaced formats are deleted as soon as Calibre confirms
     trash = None if int(setting(conn, "trash_days") or 0) == 0 else _trash_dir(settings, batch or 0)
+    seeding = grabs.seeding_names(conn)[0] if not library else set()
     done = failed = 0
     added: dict[str, int] = {}     # work -> Calibre book added earlier in this run
     for n, it in enumerate(items):
@@ -491,14 +513,19 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
             elif it["kind"] == "cleanup":
                 res = _cleanup_folder(conn, it, trash)
             else:
-                res = _import_file(conn, settings, cal, it, batch or 0, trash)
-            if res.get("action") in CLEANS_UP and res.get("path"):
+                res = _import_file(conn, settings, cal, it, batch or 0, trash, seeding)
+            kept = bool(res.get("path")) and conn.execute(
+                "SELECT 1 FROM ingest_files WHERE path=? AND decision='kept'", (res["path"],)).fetchone() is not None
+            if kept:
+                meta = orjson.loads(res.get("meta_json") or "{}") or {}
+                res["meta_json"] = orjson.dumps({**meta, "kept_seeding": True}).decode()
+            elif res.get("action") in CLEANS_UP and res.get("path"):
                 gone = leftovers.cleanup_after(_ingest_root(conn), res["path"], trash,
                                                int(ingest.setting(conn, "ingest_settle_sec")))
                 if gone:
                     meta = orjson.loads(res.get("meta_json") or "{}") or {}
                     res["meta_json"] = orjson.dumps({**meta, "leftovers": gone}).decode()
-            if trash is None and res.get("action") in NO_UNDO_WITHOUT_TRASH:
+            if trash is None and res.get("action") in NO_UNDO_WITHOUT_TRASH and not kept:
                 meta = orjson.loads(res.get("meta_json") or "{}") or {}
                 res["meta_json"] = orjson.dumps({**meta, "no_undo": True}).decode()
             _log(conn, batch=batch, status="done", **res)
@@ -574,6 +601,9 @@ def undo(conn, import_id: int, settings=None) -> dict:
             if not any(folder.iterdir()):
                 folder.rmdir()
     restored = _restore(conn, r["trash_path"], r["path"]) if a != "cleanup" else None
+    if r["path"]:
+        conn.execute("UPDATE ingest_files SET decision=NULL, decided_at=NULL WHERE path=? AND decision='kept'",
+                     (r["path"],))
     left = (orjson.loads(r["meta_json"] or "{}") or {}).get("leftovers") or []
     if left:
         leftovers.restore(left, _ingest_root(conn))

@@ -335,3 +335,40 @@ button.mini:hover { border-color: var(--accent); }
   .row .why { display: none; }
 }
 .plan-group h3 button.mini { margin-left: auto; font-weight: 500; }
+
+/* Phases 8-9: releases and downloads */
+.status-downloading { background: color-mix(in srgb, var(--warn) 16%, var(--card)); color: var(--warn); }
+button.mini.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.mini.on { border-color: var(--accent); color: var(--accent); }
+button.mini:disabled { opacity: 0.5; cursor: not-allowed; }
+.work-item.open { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.releases { padding: 4px 4px 14px 56px; }
+.releases .notice { margin: 6px 0; }
+.rel-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.rel-list li { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border: 1px solid var(--line);
+  border-radius: 10px; margin-bottom: 6px; background: var(--card); }
+.rel-list li.best { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.rel-list li.rejected { opacity: 0.62; }
+.rel-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.rel-title { font-size: 0.9rem; font-weight: 600; overflow-wrap: anywhere; }
+.rel-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 0.8rem; align-items: center; }
+.rel-why { color: var(--muted); font-size: 0.78rem; }
+.rel-why .bad, .bad { color: var(--bad); }
+.rel-score { font-family: var(--serif); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); }
+.dl-list { list-style: none; margin: 0; padding: 0; }
+.dl-list li { padding: 12px 4px; border-bottom: 1px solid var(--line); display: flex; gap: 14px; align-items: center; }
+.dl-body { flex: 1; min-width: 0; }
+.dl-title { font-size: 0.85rem; color: var(--muted); overflow-wrap: anywhere; }
+.bar { height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; margin-top: 6px; max-width: 420px; }
+.bar > span { display: block; height: 100%; background: var(--accent); }
+.bar.done > span { background: var(--ok); }
+.bar.failed > span { background: var(--bad); }
+.field input[type="password"] { max-width: 320px; }
+.client-block { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 14px; }
+.client-block h3 { font-size: 1rem; margin: 0 0 6px; }
+@media (max-width: 640px) {
+  .releases { padding-left: 4px; }
+  .rel-list li { flex-wrap: wrap; }
+  .rel-score { display: none; }
+}
+.card .releases { padding-left: 0; }

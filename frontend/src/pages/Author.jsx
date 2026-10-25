@@ -13,6 +13,7 @@ const SHOW = [
   ["all", "All"],
   ["wanted", "Wanted"],
   ["in_ingest", "In ingest"],
+  ["downloading", "Downloading"],
   ["owned", "Owned"],
   ["ignored", "Ignored"],
   ["filtered", "Filtered"],
@@ -130,7 +131,7 @@ export default function Author({ olKey }) {
           <option value="popular">Most popular</option>
         </select>
       </div>
-      {works.length ? <WorkList works={works} onState={onState} /> : <p className="muted">No works match.</p>}
+      {works.length ? <WorkList works={works} onState={onState} searchable onGrabbed={load} /> : <p className="muted">No works match.</p>}
     </section>
   );
 }

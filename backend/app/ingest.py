@@ -11,6 +11,7 @@ Unchanged files (same size and mtime) are not read again, so frequent interval s
 """
 import multiprocessing as mp
 import os
+import re
 import sqlite3
 import stat as statmod
 import time
@@ -172,6 +173,9 @@ def match_file(conn, meta: dict | None, sidecar: dict | None, relpath: str) -> d
         if m.confidence > best[3].confidence:
             best = (src, title, authors, m)
     src, title, authors, m = best
+    m = _grab_hint(conn, relpath, m)
+    if m.method == "download" and src not in ("sidecar", "embedded"):
+        src = "download"
     cands = [{"ol_key": c["ol_key"], "title": c["title"], "year": c.get("first_publish_year"),
               "authors": [a["name"] for a in c.get("authors", [])], "score": c.get("score")}
              for c in m.candidates[:5]]
@@ -179,6 +183,35 @@ def match_file(conn, meta: dict | None, sidecar: dict | None, relpath: str) -> d
             "isbn": isbn, "match_source": src if m.work_key else None, "work_key": m.work_key,
             "match_method": m.method, "match_confidence": m.confidence,
             "candidates_json": orjson.dumps(cands).decode(), "issues": ",".join(m.issues) or None}
+
+
+def _plain(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", matcher.fold(s))
+
+
+def _grab_hint(conn, relpath: str, m):
+    """A file from a release you grabbed for a book: let that grab back up (or supply) the match.
+
+    The release name has to equal the file's top folder or its file name, so other files lying around don't
+    pick it up. A confident (90+) match to a different book is left alone (a collection holds other books too).
+    """
+    parts = relpath.split("/")
+    names = {_plain(parts[0]), _plain(parts[-1].rsplit(".", 1)[0])} - {""}
+    if not names:
+        return m
+    hit = None
+    for g in conn.execute("SELECT work_key, title FROM grabs WHERE state != 'removed' ORDER BY id DESC LIMIT 500"):
+        if _plain(g["title"]) in names:
+            hit = g["work_key"]
+            break
+    if not hit:
+        return m
+    if m.work_key == hit and m.confidence < MATCHED:
+        m.confidence, m.method = max(m.confidence, MATCHED), "download"
+    elif m.work_key is None or (m.work_key != hit and m.confidence < MATCHED):
+        # unsure about a different book: go with the grab, but have you check it (the guess stays a candidate)
+        m.work_key, m.method, m.confidence = hit, "download", REVIEW
+    return m
 
 
 def base_bucket(r) -> str:

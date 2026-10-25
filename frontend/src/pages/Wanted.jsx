@@ -6,6 +6,7 @@ import { MONITOR_OPTIONS } from "./Author.jsx";
 const TABS = [
   ["wanted", "Wanted"],
   ["authors", "Monitored authors"],
+  ["downloads", "Downloads"],
   ["new", "New releases"],
 ];
 
@@ -15,8 +16,9 @@ export default function Wanted({ tab: initial }) {
     <section>
       <h1>Wanted</h1>
       <p className="lede">
-        Books you don’t have yet, from the authors you monitor and the single books you marked Want. Searching indexers
-        for them comes in the next phase.
+        Books you don’t have yet, from the authors you monitor and the single books you marked Want. <b>Search</b> finds
+        them on your indexers through Prowlarr; a grab goes to Deluge or SABnzbd, lands in the ingest folder, and is
+        imported from there.
       </p>
       <div className="tabs">
         {TABS.map(([t, label]) => (
@@ -27,6 +29,7 @@ export default function Wanted({ tab: initial }) {
       </div>
       {tab === "wanted" && <WantedList />}
       {tab === "authors" && <AuthorList />}
+      {tab === "downloads" && <Downloads />}
       {tab === "new" && <NewReleases />}
     </section>
   );
@@ -64,6 +67,7 @@ function WantedList() {
   if (error) return <div className="notice error">{error}</div>;
   if (!rows) return <p className="muted">Loading…</p>;
   const waiting = rows.filter((w) => w.status === "in_ingest").length;
+  const downloading = rows.filter((w) => w.status === "downloading").length;
   return (
     <>
       <div className="search-bar">
@@ -78,9 +82,14 @@ function WantedList() {
         <>
           <p className="muted small-print">
             {formatNumber(rows.length)} {rows.length === 1 ? "book" : "books"}
-            {waiting > 0 && `, ${formatNumber(waiting)} with a file waiting in the ingest folder`}.
+            {waiting > 0 && `, ${formatNumber(waiting)} with a file waiting in the ingest folder`}
+            {downloading > 0 && `, ${formatNumber(downloading)} downloading`}.
           </p>
-          {rows.length ? <WorkList works={rows} showAuthors onState={onState} /> : <p className="muted">No books match.</p>}
+          {rows.length ? (
+            <WorkList works={rows} showAuthors onState={onState} searchable />
+          ) : (
+            <p className="muted">No books match.</p>
+          )}
         </>
       )}
     </>
@@ -155,7 +164,75 @@ function NewReleases() {
         Books by monitored authors first published recently. Open Library only knows about a book once it’s in a
         monthly dump, so rebuild the catalog now and then to see new ones.
       </p>
-      {rows.length ? <WorkList works={rows} showAuthors onState={onState} /> : <p className="muted">Nothing recent.</p>}
+      {rows.length ? <WorkList works={rows} showAuthors onState={onState} searchable /> : <p className="muted">Nothing recent.</p>}
+    </>
+  );
+}
+
+const STATE = {
+  queued: "Queued",
+  downloading: "Downloading",
+  completed: "Downloaded, waiting for the ingest scan",
+  imported: "Imported",
+  failed: "Failed",
+  missing: "Gone from the client",
+  removed: "Removed",
+};
+
+function Downloads() {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const load = useCallback((refresh) => {
+    (refresh ? api.grabsRefresh().then((r) => r.grabs) : api.grabs()).then(setRows).catch((e) => setErr(e.message));
+  }, []);
+  useEffect(() => load(true), [load]);
+  const live = rows?.some((g) => ["queued", "downloading", "completed"].includes(g.state));
+  useEffect(() => {
+    if (!live) return;
+    const t = setInterval(() => load(false), 8000);   // the server checks the clients every minute
+    return () => clearInterval(t);
+  }, [live, load]);
+
+  const remove = async (id) => {
+    await api.grabRemove(id).catch((e) => setErr(e.message));
+    load(false);
+  };
+  if (err) return <div className="notice error">{err}</div>;
+  if (!rows) return <p className="muted">Loading…</p>;
+  if (!rows.length) return <p className="muted">Nothing grabbed yet. Press <b>Search</b> next to a wanted book.</p>;
+  return (
+    <>
+      <div className="actions">
+        <button onClick={() => load(true)}>Check the download clients now</button>
+      </div>
+      <ul className="dl-list">
+        {rows.map((g) => (
+          <li key={g.id}>
+            <div className="dl-body">
+              <a className="row-title" href={`#/work/${g.work_key}`}>
+                {g.work_title || g.work_key}
+              </a>
+              <div className="dl-title">{g.title}</div>
+              <div className="row-meta small-print">
+                {STATE[g.state] || g.state}
+                {g.state === "downloading" && ` · ${Math.round(g.progress)}%`} · {g.client === "deluge" ? "Deluge" : "SABnzbd"}
+                {g.indexer && ` · ${g.indexer}`} · {g.added_at.slice(0, 16)}
+                {g.message && <span className={g.state === "failed" ? "bad" : ""}> · {g.message}</span>}
+              </div>
+              {["queued", "downloading", "completed", "failed"].includes(g.state) && (
+                <div className={`bar ${g.state === "completed" ? "done" : g.state === "failed" ? "failed" : ""}`}>
+                  <span style={{ width: `${g.state === "failed" ? 100 : g.progress}%` }} />
+                </div>
+              )}
+            </div>
+            {!["imported", "removed"].includes(g.state) && (
+              <button className="mini" onClick={() => remove(g.id)} title="Stop following it here (the download stays in the client)">
+                {g.state === "failed" || g.state === "missing" ? "Dismiss" : "Forget"}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
     </>
   );
 }

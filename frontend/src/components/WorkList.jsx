@@ -1,3 +1,6 @@
+import { useState } from "react";
+import ReleaseSearch from "./Releases.jsx";
+
 export function Cover({ id, title, size = "S" }) {
   const cls = size === "M" ? "cover large" : "cover";
   if (!id) return <div className={`${cls} blank`} aria-hidden="true" />;
@@ -27,6 +30,7 @@ export function OwnedBadge({ owned }) {
 const STATUS_LABEL = {
   wanted: "Wanted",
   in_ingest: "In ingest",
+  downloading: "Downloading",
   ignored: "Ignored",
   filtered: "Filtered",
 };
@@ -48,7 +52,7 @@ export function StateButton({ work, onState }) {
       ? ["Don’t want", null]
       : work.override === "ignored"
         ? ["Unignore", null]
-        : work.status === "wanted" || work.status === "in_ingest"
+        : ["wanted", "in_ingest", "downloading"].includes(work.status)
           ? ["Ignore", "ignored"]
           : ["Want", "wanted"];
   return (
@@ -58,11 +62,15 @@ export function StateButton({ work, onState }) {
   );
 }
 
-export default function WorkList({ works, showAuthors = false, onState }) {
+const SEARCHABLE = new Set(["wanted", "downloading", "in_ingest", "ignored", "filtered", "unmonitored"]);
+
+export default function WorkList({ works, showAuthors = false, onState, searchable = false, onGrabbed }) {
+  const [open, setOpen] = useState(null);
   return (
     <ul className="rows">
       {works.map((w) => (
-        <li key={w.ol_key} className="row work">
+        <li key={w.ol_key} className={`work-item ${open === w.ol_key ? "open" : ""}`}>
+        <div className="row work">
           <Cover id={w.cover_id} title={w.title} />
           <div className="work-body">
             <a className="row-title" href={`#/work/${w.ol_key}`}>
@@ -92,10 +100,17 @@ export default function WorkList({ works, showAuthors = false, onState }) {
             {w.subjects && <div className="row-subjects">{w.subjects.split(" | ").slice(0, 5).join(" · ")}</div>}
           </div>
           {w.status === "filtered" && <span className="muted small-print why">{w.status_why}</span>}
+          {searchable && SEARCHABLE.has(w.status) && (
+            <button className={`mini ${open === w.ol_key ? "on" : ""}`} onClick={() => setOpen(open === w.ol_key ? null : w.ol_key)}>
+              {open === w.ol_key ? "Close" : "Search"}
+            </button>
+          )}
           <StateButton work={w} onState={onState} />
           <a className="mono ol-link" href={`https://openlibrary.org/works/${w.ol_key}`} target="_blank" rel="noreferrer">
             {w.ol_key}
           </a>
+        </div>
+        {open === w.ol_key && <ReleaseSearch workKey={w.ol_key} onGrabbed={onGrabbed} />}
         </li>
       ))}
     </ul>

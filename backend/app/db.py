@@ -254,7 +254,31 @@ def _migrate_9(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5, _migrate_6, _migrate_7, _migrate_8, _migrate_9]  # MIGRATIONS[i] upgrades version i+1 to i+2
+def _migrate_10(conn: sqlite3.Connection) -> None:
+    """Phases 8-9: releases sent to a download client, followed until they're imported."""
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS grabs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_key TEXT NOT NULL,
+        title TEXT NOT NULL,               -- the release name
+        indexer TEXT, protocol TEXT, format TEXT, size INTEGER,
+        client TEXT NOT NULL,              -- deluge | sabnzbd
+        client_id TEXT,                    -- torrent hash or SABnzbd nzo id
+        state TEXT NOT NULL DEFAULT 'queued',   -- queued downloading completed failed missing imported removed
+        progress REAL NOT NULL DEFAULT 0,
+        message TEXT,
+        release_json TEXT,
+        added_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        finished_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_grabs_work ON grabs(work_key);
+    CREATE INDEX IF NOT EXISTS idx_grabs_state ON grabs(state);
+    """)
+
+
+MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5, _migrate_6, _migrate_7, _migrate_8, _migrate_9,
+              _migrate_10]  # MIGRATIONS[i] upgrades version i+1 to i+2
 SCHEMA_VERSION = 1 + len(MIGRATIONS)
 
 
