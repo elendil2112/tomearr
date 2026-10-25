@@ -259,7 +259,8 @@ ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns, 
     decision=CASE WHEN excluded.sha256 IS ingest_files.sha256 THEN ingest_files.decision END,
     decided_work_key=CASE WHEN excluded.sha256 IS ingest_files.sha256 THEN ingest_files.decided_work_key END,
     override_json=CASE WHEN excluded.sha256 IS ingest_files.sha256 THEN ingest_files.override_json END,
-    decided_at=CASE WHEN excluded.sha256 IS ingest_files.sha256 THEN ingest_files.decided_at END
+    decided_at=CASE WHEN excluded.sha256 IS ingest_files.sha256 THEN ingest_files.decided_at END,
+    compare_choice=CASE WHEN excluded.sha256 IS ingest_files.sha256 THEN ingest_files.compare_choice END
 """
 MATCH_SQL = ("UPDATE ingest_files SET title=:title, authors=:authors, isbn=:isbn, match_source=:match_source, "
              "work_key=:work_key, match_method=:match_method, match_confidence=:match_confidence, "

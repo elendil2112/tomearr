@@ -227,7 +227,14 @@ def _migrate_7(conn: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5, _migrate_6, _migrate_7]  # MIGRATIONS[i] upgrades version i+1 to i+2
+def _migrate_8(conn: sqlite3.Connection) -> None:
+    """Your choice after comparing an ingest file with the EPUB Calibre already has: calibre | ingest | skip."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(ingest_files)")}
+    if "compare_choice" not in cols:
+        conn.execute("ALTER TABLE ingest_files ADD COLUMN compare_choice TEXT")
+
+
+MIGRATIONS = [_migrate_2, _migrate_3, _migrate_4, _migrate_5, _migrate_6, _migrate_7, _migrate_8]  # MIGRATIONS[i] upgrades version i+1 to i+2
 SCHEMA_VERSION = 1 + len(MIGRATIONS)
 
 

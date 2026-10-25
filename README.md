@@ -164,6 +164,11 @@ book or EPUB comes out of Calibre, replaced formats go back in, and the original
 - **PDFs** need your OK each time: convert, look at the result (text sample and a download link), then approve.
 - **Archives** (zip, rar, 7z) are unpacked into a folder next to them; the next scan picks up what was inside.
 - **Duplicates** of a file already in Calibre go to the trash (a setting).
+- **Already have it** (a different file of a book Calibre has as EPUB): **compare** shows both side by side
+  (cover, words, chapters, table of contents, images, fonts, EPUB version, whether each looks publisher-made or
+  converted/OCR'd, metadata, and the same passage from both) with a suggestion. **Keep Calibre's** trashes the
+  file; **Use this one** replaces the EPUB in Calibre on the next import (old EPUB to the trash, undoable; a
+  coverless Calibre record also takes the new cover); **Decide later** leaves it.
 - **Books already in Calibre** that only have MOBI/AZW3/...: the second tab converts them to EPUB the same way.
 - **Import automatically** after each scan is a setting (off by default).
 - **Covers:** when an imported EPUB has no cover, the Open Library cover for its work (or its ISBN) is embedded

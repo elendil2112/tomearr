@@ -36,7 +36,8 @@ DEFAULTS = {
 SECRET = "calibre_password"
 NO_CONVERT = {"EPUB"}
 # Imports that deleted something; with the trash off there's nothing to put back, so they can't be undone.
-NO_UNDO_WITHOUT_TRASH = {"add", "add_format", "convert_existing", "delete_duplicate", "already_have", "unpack"}
+NO_UNDO_WITHOUT_TRASH = {"add", "add_format", "convert_existing", "delete_duplicate", "already_have", "unpack",
+                         "replace"}
 
 
 class ImportCancelled(Exception):
@@ -139,8 +140,17 @@ def plan(conn) -> dict:
             steps = ["use the EPUB you approved"]
         if any("EPUB" in o["formats"] for o in owned):
             have = next(o for o in owned if "EPUB" in o["formats"])
-            it.update(kind="already_have", select=False, calibre_id=have["calibre_id"],
-                      steps=[f"Calibre already has this book as EPUB (#{have['calibre_id']}); move this file to the trash"])
+            choice = r["compare_choice"]
+            if choice == "ingest":
+                it.update(kind="replace", select=True, calibre_id=have["calibre_id"], choice=choice,
+                          steps=steps + [f"replace the EPUB in Calibre (#{have['calibre_id']}) with this one; the old "
+                                         "EPUB goes to the trash", "move the original to the trash"])
+            else:
+                it.update(kind="already_have", select=choice == "calibre", calibre_id=have["calibre_id"], choice=choice,
+                          steps=[f"Calibre already has this book as EPUB (#{have['calibre_id']})"
+                                 + ("; you chose to keep Calibre's, so move this file to the trash" if choice == "calibre"
+                                    else "; you'll decide later" if choice == "skip"
+                                    else "; compare them to choose, or move this file to the trash")])
         elif owned:
             o = owned[0]
             drop = sorted(set(o["formats"]) & rf)
@@ -316,6 +326,41 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
             meta = {**meta, "cover": str(img)}
     calibre_cli.write_meta(epub, meta)
 
+    if kind == "replace":
+        cid = it["calibre_id"]
+        before = cal.formats(cid)
+        if "EPUB" not in before:
+            raise ImportError_(f"book #{cid} no longer has an EPUB to replace; sync the library")
+        backup = _backup_calibre_format(conn, cid, "EPUB", trash) if trash is not None else None
+        if trash is not None and backup is None:
+            raise ImportError_("couldn't back up Calibre's current EPUB, so it wasn't replaced")
+        cal.add_format(cid, epub)            # replaces the existing EPUB
+        if "EPUB" not in cal.formats(cid):
+            if backup:
+                cal.add_format(cid, backup)
+            raise ImportError_("Calibre did not confirm the new EPUB")
+        # A coverless Calibre record takes the new EPUB's cover (Calibre keeps the record's cover separately).
+        cover_set = False
+        lb = conn.execute("SELECT has_cover FROM library_books WHERE calibre_id=?", (cid,)).fetchone()
+        if lb is not None and not lb["has_cover"]:
+            img = stage / "cover-from-epub.jpg"
+            try:
+                calibre_cli._run([calibre_cli.tool("ebook-meta"), str(epub), "--get-cover", str(img)], 120)
+                if img.is_file() and img.stat().st_size:
+                    cal.set_fields(cid, {"cover": str(img)})
+                    conn.execute("UPDATE library_books SET has_cover=1 WHERE calibre_id=?", (cid,))
+                    cover_set = True
+            except CalibreCLIError:
+                pass
+        t = _move_to_trash(src, trash, r["path"])
+        conn.execute("DELETE FROM ingest_files WHERE id=?", (r["id"],))
+        shutil.rmtree(stage, ignore_errors=True)
+        return {"action": "replace", "path": r["path"], "sha256": r["sha256"], "source_format": r["format"],
+                "work_key": wk, "calibre_id": cid, "added_format": None,
+                "removed_json": orjson.dumps([{"format": "EPUB", "backup": str(backup) if backup else None}]).decode(),
+                "trash_path": str(t) if t else None,
+                "meta_json": orjson.dumps({"cover_added": "cover" in meta, "calibre_cover_set": cover_set}).decode()}
+
     removed, kept, cid, added_new = [], [], None, False
     try:
         if kind == "add":
@@ -394,7 +439,7 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
     p = plan_library(conn) if library else plan(conn)
     items = [i for i in p["items"] if (i["key"] in keys if keys is not None else i["select"])]
     items = [i for i in items if i["kind"] not in ("pdf_hold", "pdf_waiting")]
-    needs_calibre = any(i["kind"] in ("add", "add_format", "convert_existing") for i in items)
+    needs_calibre = any(i["kind"] in ("add", "add_format", "convert_existing", "replace") for i in items)
     needs_ingest_write = any("file_id" in i for i in items)
     if needs_ingest_write and not os.access(_ingest_root(conn), os.W_OK):
         raise ImportError_(f"The ingest folder {_ingest_root(conn)} is read-only. Remove ':ro' from the /ingest "
@@ -468,6 +513,11 @@ def undo(conn, import_id: int, settings=None) -> dict:
     a = r["action"]
     if a == "add":
         cal.remove(r["calibre_id"])
+    elif a == "replace":
+        rm = orjson.loads(r["removed_json"] or "[]")
+        if not rm or not rm[0].get("backup") or not Path(rm[0]["backup"]).exists():
+            raise ImportError_("the previous EPUB's backup is gone (trash purged?), so it can't be put back")
+        cal.add_format(r["calibre_id"], Path(rm[0]["backup"]))
     elif a in ("add_format", "convert_existing"):
         for rm in orjson.loads(r["removed_json"] or "[]"):
             if not Path(rm["backup"]).exists():
@@ -523,6 +573,16 @@ def history(conn, limit: int = 200) -> list[dict]:
 
 
 # --- PDFs ---------------------------------------------------------------------------------------------------------
+
+def set_compare_choice(conn, file_id: int, choice: str | None) -> dict:
+    if choice not in ("calibre", "ingest", "skip", None):
+        raise ImportError_("choice must be calibre, ingest or skip")
+    cur = conn.execute("UPDATE ingest_files SET compare_choice=? WHERE id=?", (choice, file_id))
+    if not cur.rowcount:
+        raise KeyError(file_id)
+    conn.commit()
+    return {"id": file_id, "choice": choice}
+
 
 def pdf_action(conn, settings, file_id: int, action: str) -> dict:
     r = conn.execute("SELECT * FROM ingest_files WHERE id=?", (file_id,)).fetchone()
