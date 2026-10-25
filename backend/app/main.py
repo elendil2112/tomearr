@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import calibre_cli, covers, db, importer, ingest, isbn, library, review, search
+from . import calibre_cli, compare, covers, db, importer, ingest, isbn, library, review, search
 from .scheduler import Scheduler
 from .config import KINDS, get_settings
 from .jobs import JobRunner
@@ -47,6 +47,10 @@ class SettingsBody(BaseModel):
 class ImportRun(BaseModel):
     keys: list[str] | None = None     # plan item keys; None = everything selected by default
     library: bool = False             # convert books already in Calibre instead of ingest files
+
+
+class ChoiceBody(BaseModel):
+    choice: str | None                # calibre | ingest | skip | null (undecided)
 
 
 class PdfBody(BaseModel):
@@ -485,6 +489,26 @@ def create_app() -> FastAPI:
     @app.get("/api/import/plan")
     def import_plan(library: bool = False):
         return importing(lambda c: importer.plan_library(c) if library else importer.plan(c))
+
+    @app.get("/api/import/compare/{file_id}")
+    def import_compare(file_id: int):
+        def c(conn):
+            try:
+                return compare.compare(conn, settings, file_id)
+            except compare.CompareUnavailable as exc:
+                raise HTTPException(409, str(exc))
+        return importing(c)
+
+    @app.get("/api/import/compare/{file_id}/cover/{side}")
+    def import_compare_cover(file_id: int, side: str):
+        try:
+            return FileResponse(compare.cover_path(settings, file_id, side), media_type="image/jpeg")
+        except KeyError:
+            raise HTTPException(404, "no cover")
+
+    @app.post("/api/import/compare/{file_id}/choice")
+    def import_compare_choice(file_id: int, body: ChoiceBody):
+        return importing(lambda c: importer.set_compare_choice(c, file_id, body.choice))
 
     @app.get("/api/covers/missing")
     def covers_missing():

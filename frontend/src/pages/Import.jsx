@@ -6,6 +6,7 @@ const KIND = {
   add: ["New book", "Added to Calibre as a new book"],
   add_format: ["Add EPUB", "EPUB added to a book you already have"],
   already_have: ["Already have it", "Calibre already has this book as EPUB"],
+  replace: ["Replace in Calibre", "EPUB in Calibre replaced with this one"],
   delete_duplicate: ["Duplicate", "Identical to a file already in Calibre"],
   unpack: ["Unpack", "Archive unpacked into the ingest folder"],
   pdf_convert: ["Convert PDF", "PDF converted for you to check"],
@@ -14,8 +15,104 @@ const KIND = {
   convert_existing: ["Convert", "Book in Calibre converted to EPUB"],
   set_cover: ["Cover", "Cover added from Open Library"],
 };
-const ORDER = ["add", "add_format", "convert_existing", "pdf_convert", "unpack", "delete_duplicate", "already_have",
+const ORDER = ["add", "add_format", "replace", "convert_existing", "pdf_convert", "unpack", "delete_duplicate", "already_have",
   "pdf_waiting", "pdf_hold"];
+
+const CHOICE_LABEL = { calibre: "keeping Calibre's", ingest: "using this one", skip: "deciding later" };
+
+function Row({ label, a, b, better }) {
+  return (
+    <tr>
+      <th>{label}</th>
+      <td className={better === "calibre" ? "cmp-better" : ""}>{a}</td>
+      <td className={better === "ingest" ? "cmp-better" : ""}>{b}</td>
+    </tr>
+  );
+}
+
+function ComparePanel({ item, onChange }) {
+  const [c, setC] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.compare(item.file_id).then(setC).catch((e) => setErr(e.message));
+  }, [item.file_id]);
+  const choose = async (choice) => {
+    setBusy(true);
+    try {
+      await api.compareChoice(item.file_id, choice);
+      onChange();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (err) return <div className="notice error">{err}</div>;
+  if (!c) return <p className="muted small-print">Comparing{item.format !== "EPUB" ? ` (converting ${item.format} to EPUB first)` : ""}…</p>;
+  const A = c.calibre, B = c.ingest;
+  const more = (k) => (A[k] === B[k] ? null : A[k] > B[k] ? "calibre" : "ingest");
+  const meta = (m) => [m.title, (m.authors || []).join(", "), (m.isbns || [])[0], m.publisher, m.year].filter(Boolean).join(" · ") || "—";
+  const s = c.suggestion;
+  return (
+    <div className="cmp">
+      <div className={`notice ${s.choice === "ingest" ? "ok-notice" : ""}`}>
+        <strong>
+          {s.choice === "ingest" ? "This file looks better." : s.choice === "calibre" ? "Calibre's copy looks better." : "They look about the same."}
+        </strong>{" "}
+        {s.why.join("; ")}.
+      </div>
+      <div className="table-wrap">
+        <table className="cmp-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>In Calibre (#{c.calibre_id})</th>
+              <th>This file{c.converted_for_compare ? ` (${c.format}, converted to compare)` : ""}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <Row
+              label="Cover"
+              a={A.cover_url ? <img className="cmp-cover" src={A.cover_url} alt="Calibre's cover" /> : "none"}
+              b={B.cover_url ? <img className="cmp-cover" src={B.cover_url} alt="This file's cover" /> : "none"}
+              better={A.has_cover === B.has_cover ? null : A.has_cover ? "calibre" : "ingest"}
+            />
+            <Row label="Words" a={formatNumber(A.words)} b={formatNumber(B.words)} better={Math.abs(A.words - B.words) > 0.1 * Math.max(A.words, B.words) ? more("words") : null} />
+            <Row label="Chapters" a={A.chapters} b={B.chapters} />
+            <Row label="Contents" a={A.toc_entries ? `${A.toc_entries} entries` : "none"} b={B.toc_entries ? `${B.toc_entries} entries` : "none"} better={(A.toc_entries > 2) === (B.toc_entries > 2) ? null : A.toc_entries > 2 ? "calibre" : "ingest"} />
+            <Row label="Images" a={A.images} b={B.images} />
+            <Row label="Fonts" a={A.fonts || "none"} b={B.fonts || "none"} />
+            <Row label="Looks like" a={<>{A.origin === "publisher" ? "publisher-made" : A.origin}<div className="muted small-print">{A.origin_why.join("; ")}</div></>}
+                 b={<>{B.origin === "publisher" ? "publisher-made" : B.origin}<div className="muted small-print">{B.origin_why.join("; ")}</div></>}
+                 better={A.origin === B.origin || [A.origin, B.origin].includes("unknown") ? null : A.origin === "publisher" ? "calibre" : "ingest"} />
+            <Row label="EPUB" a={A.epub_version || "?"} b={B.epub_version || "?"} />
+            <Row label="Size" a={formatBytes(A.size)} b={formatBytes(B.size)} />
+            <Row label="Metadata" a={meta(A.meta)} b={meta(B.meta)} />
+            <Row label="Same passage" a={<span className="cmp-sample">{A.sample || "—"}</span>} b={<span className="cmp-sample">{B.sample || "—"}</span>} />
+          </tbody>
+        </table>
+      </div>
+      {c.choice && <p className="muted small-print">You chose: {CHOICE_LABEL[c.choice]}.</p>}
+      <div className="actions">
+        <button className={s.choice !== "ingest" ? "primary" : ""} disabled={busy} onClick={() => choose("calibre")}>
+          Keep Calibre's
+        </button>
+        <button className={s.choice === "ingest" ? "primary" : ""} disabled={busy} onClick={() => choose("ingest")}>
+          Use this one
+        </button>
+        <button disabled={busy} onClick={() => choose("skip")}>
+          Decide later
+        </button>
+      </div>
+      <p className="muted small-print">
+        Choices take effect when you press Import. “Use this one” replaces the EPUB in Calibre (the old one goes to the
+        trash, so it can be undone). Calibre's title and author stay as they are; if Calibre has no cover, it takes
+        this file's.
+      </p>
+    </div>
+  );
+}
 
 function PdfCard({ item, onChange }) {
   const [prev, setPrev] = useState(null);
@@ -58,6 +155,7 @@ function PdfCard({ item, onChange }) {
 
 function PlanView({ library, onRun, running }) {
   const [plan, setPlan] = useState(null);
+  const [open, setOpen] = useState(null);
   const [sel, setSel] = useState({});
   const [err, setErr] = useState("");
   const load = useCallback(() => {
@@ -115,9 +213,22 @@ function PlanView({ library, onRun, running }) {
                       <span className="plan-what">
                         <span className="ing-path">{i.path || `${i.title} — ${i.authors}`}</span>
                         {i.work_title && <span className="muted"> → {i.work_title}</span>}
-                        <span className="plan-steps">{i.steps.join(" · ")}</span>
+                        <span className="plan-steps">
+                          {i.steps.join(" · ")}
+                          {i.choice && ` · you chose: ${CHOICE_LABEL[i.choice]}`}
+                        </span>
                       </span>
                     </label>
+                    {(i.kind === "already_have" || i.kind === "replace") && (
+                      <button className="link" onClick={() => setOpen(open === i.key ? null : i.key)}>
+                        {open === i.key ? "close" : "compare"}
+                      </button>
+                    )}
+                    {open === i.key && (
+                      <div className="cmp-wrap">
+                        <ComparePanel item={i} onChange={() => { setOpen(null); load(); }} />
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -181,6 +292,7 @@ function History({ refreshKey }) {
                     {r.source_format && r.added_format && r.source_format !== "EPUB" ? ` · converted from ${r.source_format}` : ""}
                     {r.removed?.length ? ` · removed ${r.removed.map((x) => x.format).join(", ")}` : ""}
                     {r.meta?.cover_added ? " · cover from Open Library" : ""}
+                    {r.meta?.calibre_cover_set ? " · cover set in Calibre" : ""}
                     {r.meta?.no_undo ? " · original deleted" : ""}
                     {r.meta?.kept_formats?.length ? ` · kept ${r.meta.kept_formats.join(", ")} (couldn't back it up)` : ""}
                     {r.error ? ` · ${r.error}` : ""}
@@ -234,7 +346,7 @@ export default function Import() {
       {conn &&
         (conn.ok ? (
           <div className="notice ok-notice">
-            Calibre connection OK: {formatNumber(conn.books)} books at <code>{conn.target}</code> (calibre {conn.version}).
+            Calibre connection OK: {formatNumber(conn.books)} book{conn.books === 1 ? "" : "s"} at <code>{conn.target}</code> (calibre {conn.version}).
           </div>
         ) : (
           <div className="notice error">

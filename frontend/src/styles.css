@@ -301,3 +301,16 @@ kbd { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; border: 1
 ul.jobs.card { list-style: none; padding: 4px 20px; }
 .inline-field input.wide { max-width: 320px; }
 .hist-undone { opacity: 0.6; }
+
+/* --- compare --------------------------------------------------------------------- */
+.plan-items li { flex-wrap: wrap; }
+.cmp-wrap { flex-basis: 100%; }
+.cmp { margin: 8px 0 4px; padding: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
+.cmp-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin: 6px 0 10px; }
+.cmp-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 0.78rem; padding: 7px 8px;
+  vertical-align: top; white-space: nowrap; }
+.cmp-table thead th { text-transform: none; font-size: 0.85rem; color: var(--ink); border-bottom: 1px solid var(--line); }
+.cmp-table td { padding: 7px 8px; border-top: 1px solid var(--line); vertical-align: top; width: 45%; }
+.cmp-table td.cmp-better { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.cmp-cover { width: 60px; height: 90px; object-fit: cover; border-radius: 3px; display: block; }
+.cmp-sample { font-family: var(--serif); font-size: 0.85rem; line-height: 1.45; display: block; max-height: 9em; overflow: auto; }
