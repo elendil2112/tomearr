@@ -264,7 +264,7 @@ function CalibreWriteSettings({ settings, save, saved }) {
         value={settings.trash_days}
         onSave={(v) => save({ trash_days: v }, "trash")}
         saved={saved === "trash"}
-        hint="Originals and replaced formats are kept this long so any import can be undone, then deleted for good."
+        hint="Originals and replaced formats are kept this long so any import can be undone, then deleted for good. 0 deletes them as soon as Calibre confirms the import (those imports can't be undone)."
       />
     </div>
   );

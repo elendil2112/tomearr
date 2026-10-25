@@ -163,7 +163,7 @@ function History({ refreshKey }) {
         <div key={b.batch ?? "none"} className="plan-group">
           <h3>
             Run #{b.batch} <span className="muted small-print">{b.rows[b.rows.length - 1].at} UTC</span>
-            {b.rows.some((r) => r.status === "done") && (
+            {b.rows.some((r) => r.status === "done" && r.action !== "set_cover" && !r.meta?.no_undo) && (
               <button className="link" onClick={() => undo(() => api.importUndoBatch(b.batch))}>
                 undo this run
               </button>
@@ -181,11 +181,12 @@ function History({ refreshKey }) {
                     {r.source_format && r.added_format && r.source_format !== "EPUB" ? ` · converted from ${r.source_format}` : ""}
                     {r.removed?.length ? ` · removed ${r.removed.map((x) => x.format).join(", ")}` : ""}
                     {r.meta?.cover_added ? " · cover from Open Library" : ""}
+                    {r.meta?.no_undo ? " · original deleted" : ""}
                     {r.meta?.kept_formats?.length ? ` · kept ${r.meta.kept_formats.join(", ")} (couldn't back it up)` : ""}
                     {r.error ? ` · ${r.error}` : ""}
                   </span>
                 </span>
-                {r.status === "done" && r.action !== "set_cover" && (
+                {r.status === "done" && r.action !== "set_cover" && !r.meta?.no_undo && (
                   <button className="link" onClick={() => undo(() => api.importUndo(r.id))}>
                     undo
                   </button>

@@ -443,3 +443,26 @@ def test_api_import_flow(env, monkeypatch):
         assert client.post(f"/api/import/{hist[0]['id']}/undo").status_code == 400
         assert client.post("/api/import/99999/undo").status_code == 404
         assert client.get("/api/import/pdf/1/preview").status_code == 404
+
+
+def test_trash_zero_deletes_originals_immediately(conn, calibre, drop, env):  # noqa: F811
+    db.set_meta(conn, "setting_trash_days", "0")
+    _scan(conn)
+    r = _run(conn, batch=11)
+    assert (r["done"], r["failed"]) == (5, 0), [h["error"] for h in importer.history(conn) if h["error"]]
+    # originals gone straight away, nothing kept in a trash folder
+    left = {str(p.relative_to(drop)) for p in drop.rglob("*") if p.is_file()}
+    assert left == {"Hamlet (William Shakespeare).pdf", "locked.epub",
+                    "bundle (unpacked)/inner/The Hobbit Companion.epub"}
+    assert not (env / "config" / "trash").exists() or not any((env / "config" / "trash").rglob("*"))
+    # the books are in Calibre; Hamlet's MOBI was replaced without a backup
+    by_title = {b["title"]: b for b in _books(calibre).values()}
+    assert by_title["Hamlet"]["formats"] == ["EPUB"] and by_title["The Lord of the Rings"]["formats"] == ["EPUB"]
+    hist = importer.history(conn)
+    assert all(h["meta"] and h["meta"].get("no_undo") for h in hist)
+    assert next(h for h in hist if h["action"] == "add_format")["removed"] == [{"format": "MOBI", "backup": None}]
+    # nothing to put back, so undo is refused rather than removing the only copy from Calibre
+    with pytest.raises(importer.ImportError_, match="can't be undone"):
+        importer.undo(conn, hist[0]["id"])
+    assert importer.undo_batch(conn, 11) == {"undone": 0, "errors": []}
+    assert len(_books(calibre)) == 5
