@@ -317,7 +317,8 @@ def test_same_book_twice_in_one_run(conn, calibre, env):  # noqa: F811
     assert (r["done"], r["failed"]) == (2, 0)
     lotr = [b for b in _books(calibre).values() if b["title"] == "The Lord of the Rings"]
     assert len(lotr) == 1 and lotr[0]["formats"] == ["EPUB"]
-    assert sorted(h["action"] for h in importer.history(conn)) == ["add", "already_have"]
+    assert sorted(h["action"] for h in importer.history(conn)) == ["add", "other_version"]   # the EPUB won
+    assert next(h for h in importer.history(conn) if h["action"] == "add")["path"].endswith("a.epub")
 
 
 def _add_catalog_works(conn, n):  # noqa: F811

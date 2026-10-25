@@ -174,8 +174,9 @@ class Calibre:
             args += ["--field", f"{k}:{v}"]
         self._db(*args)
 
-    def remove(self, book_id: int) -> None:
-        self._db("remove", str(int(book_id)), "--permanent")
+    def remove(self, book_id: int, permanent: bool = True) -> None:
+        """Remove a book. permanent=False sends it to Calibre's own trash bin, where Calibre can restore it."""
+        self._db("remove", str(int(book_id)), *(["--permanent"] if permanent else []))
 
 
 # --- conversion and file metadata (local, no library involved) ------------------------------------------

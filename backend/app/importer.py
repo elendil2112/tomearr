@@ -19,7 +19,7 @@ from pathlib import Path
 
 import orjson
 
-from . import calibre_cli, db, extract, grabs, ingest, leftovers, library, review
+from . import calibre_cli, compare, db, extract, grabs, identity, ingest, leftovers, library, review
 from .calibre_cli import Calibre, CalibreCLIError, Target
 
 DEFAULTS = {
@@ -37,10 +37,11 @@ SECRET = "calibre_password"
 NO_CONVERT = {"EPUB"}
 # Imports that deleted something; with the trash off there's nothing to put back, so they can't be undone.
 NO_UNDO_WITHOUT_TRASH = {"add", "add_format", "convert_existing", "delete_duplicate", "already_have", "unpack",
-                         "seeding_done",
+                         "seeding_done", "other_version", "remove_duplicate",
                          "replace", "cleanup"}
 # After these, the original has left the ingest folder, so its folder may now hold only leftovers.
-CLEANS_UP = {"add", "add_format", "replace", "already_have", "delete_duplicate", "unpack", "seeding_done"}
+CLEANS_UP = {"add", "add_format", "replace", "already_have", "delete_duplicate", "unpack", "seeding_done",
+             "other_version"}
 
 
 class ImportCancelled(Exception):
@@ -113,10 +114,114 @@ def _owned(conn, work_key: str) -> list[dict]:
                                   (work_key,))]
 
 
+# --- versions: one book, several files ---------------------------------------------------------------------
+
+FORMAT_RANK = {"EPUB": 6, "AZW3": 5, "KF8": 5, "MOBI": 4, "AZW": 4, "PRC": 3, "FB2": 3, "LIT": 2, "DOCX": 2,
+               "RTF": 1, "PDF": 0}
+_INSPECT: dict[tuple, dict] = {}
+
+
+def _inspect(path: Path) -> dict | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    k = (str(path), st.st_size, st.st_mtime_ns)
+    if k not in _INSPECT:
+        if len(_INSPECT) > 2000:
+            _INSPECT.clear()
+        info = compare.inspect_epub(path)
+        info.pop("_text", None)
+        _INSPECT[k] = info
+    return _INSPECT[k]
+
+
+def version_quality(fmt: str | None, epub_info: dict | None, confidence: int = 0) -> tuple[float, list[str]]:
+    """How good a copy is: format first, then (for EPUBs) completeness, publisher-made vs converted, cover, TOC."""
+    q, why = FORMAT_RANK.get((fmt or "").upper(), 1) * 100.0, [fmt or "unknown format"]
+    if epub_info:
+        if epub_info.get("error"):
+            q -= 500
+            why.append("can't be read")
+        else:
+            q += min(epub_info.get("words", 0) / 5000, 30)        # longer (complete, not a sample) is better
+            if epub_info.get("origin") == "publisher":
+                q += 20
+                why.append("publisher-made")
+            elif epub_info.get("origin") == "converted":
+                why.append("converted")
+            if epub_info.get("has_cover"):
+                q += 5
+                why.append("cover")
+            if epub_info.get("toc_entries", 0) > 2:
+                q += 3
+            why.append(f"{epub_info.get('words', 0):,} words")
+    return q + confidence / 100, why
+
+
+def _pick_versions(conn, items: list[dict]) -> list[dict]:
+    """Several files that are the same book (same record, same Calibre book, or same title and author): import
+    only the best one. The others become 'other_version' and go to the trash once the best one is in."""
+    cand = [i for i in items if i["kind"] in ("add", "add_format")]
+    if len(cand) < 2:
+        return items
+    root = _ingest_root(conn)
+    info = {}
+    for i in cand:
+        t, sub, names = identity.work_names(conn, i["work_key"])
+        i["_tp"], i["_sn"] = identity.title_parts(t or i.get("work_title") or "", sub), identity.surnames(names)
+    parent = {i["key"]: i["key"] for i in cand}
+
+    def find(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+    for n, a in enumerate(cand):
+        for b in cand[n + 1:]:
+            same = (a["work_key"] == b["work_key"]
+                    or (a.get("calibre_id") and a.get("calibre_id") == b.get("calibre_id"))
+                    or (not a["separate"] and not b["separate"] and a["_sn"] & b["_sn"]
+                        and identity.same_title(a["_tp"], b["_tp"])))
+            if same:
+                parent[find(a["key"])] = find(b["key"])
+    groups: dict[str, list[dict]] = {}
+    for i in cand:
+        groups.setdefault(find(i["key"]), []).append(i)
+    rows = {r["id"]: r for r in conn.execute(
+        f"SELECT id, format, match_confidence, pdf_state FROM ingest_files WHERE id IN ({','.join('?' * len(cand))})",
+        [i["file_id"] for i in cand])}
+    losers = []
+    for g in groups.values():
+        if len(g) < 2:
+            continue
+        for i in g:
+            r = rows.get(i["file_id"])
+            epub = _inspect(root / i["path"]) if (i["format"] or "").upper() == "EPUB" else None
+            i["_q"], i["_why"] = version_quality(i["format"], epub, r["match_confidence"] if r else 0)
+            if r and r["format"] == "PDF" and r["pdf_state"] == "approved":
+                i["_q"] += 10_000          # you converted and approved this one yourself
+                i["_why"] = ["the PDF you approved"]
+        g.sort(key=lambda x: -x["_q"])
+        best = g[0]
+        best["steps"] = [f"best of {len(g)} versions of this book ({', '.join(best['_why'])})"] + best["steps"]
+        for o in g[1:]:
+            o.update(kind="other_version", select=True, best_key=best["key"], best_path=best["path"],
+                     steps=[f"another version of the same book ({', '.join(o['_why'])}); importing "
+                            f"“{best['path']}” instead, then this goes to the trash"])
+            losers.append(o)
+    for i in cand:
+        for k in ("_tp", "_sn", "_q", "_why"):
+            i.pop(k, None)
+    # the other versions go last, so they're only removed after the best one was imported
+    return [i for i in items if i not in losers] + losers
+
+
 def plan(conn) -> dict:
     """Everything an import would do, without doing any of it."""
     items = []
     rf = replace_formats(conn)
+    index = identity.LibraryIndex(conn)
     rows = conn.execute(
         f"SELECT f.*, w.title AS work_title FROM ingest_files f "
         f"LEFT JOIN works w ON w.ol_key = coalesce(f.decided_work_key, f.work_key) "
@@ -137,6 +242,17 @@ def plan(conn) -> dict:
             items.append(it)
             continue
         owned = _owned(conn, wk)
+        same_note = None
+        if not owned and r["compare_choice"] != "separate":
+            # the same book in Calibre under another Open Library record (or none): don't add it twice
+            t, sub, names = identity.work_names(conn, wk)
+            hits = index.find(t or r["title"] or "", names or r["authors"] or "", sub)
+            if hits:
+                owned = [{"calibre_id": b["calibre_id"], "formats": b["formats_list"]} for b in hits]
+                epub = next((b for b in hits if "EPUB" in b["formats_list"]), hits[0])
+                same_note = f"Calibre has this book as “{epub['title']}” (#{epub['calibre_id']}), under another record"
+        it["same_note"] = same_note
+        it["separate"] = r["compare_choice"] == "separate"
         convert = r["format"] not in NO_CONVERT
         steps = [f"convert {r['format']} to EPUB"] if convert and r["format"] != "PDF" else []
         if r["format"] == "PDF":
@@ -150,7 +266,8 @@ def plan(conn) -> dict:
                                          "EPUB goes to the trash", "move the original to the trash"])
             else:
                 it.update(kind="already_have", select=choice == "calibre", calibre_id=have["calibre_id"], choice=choice,
-                          steps=[f"Calibre already has this book as EPUB (#{have['calibre_id']})"
+                          steps=([same_note] if same_note else []) +
+                                [f"Calibre already has this book as EPUB (#{have['calibre_id']})"
                                  + ("; you chose to keep Calibre's, so move this file to the trash" if choice == "calibre"
                                     else "; you'll decide later" if choice == "skip"
                                     else "; compare them to choose, or move this file to the trash")])
@@ -158,13 +275,15 @@ def plan(conn) -> dict:
             o = owned[0]
             drop = sorted(set(o["formats"]) & rf)
             it.update(kind="add_format", calibre_id=o["calibre_id"], remove=drop,
-                      steps=steps + [f"add the EPUB to your existing book #{o['calibre_id']}"] +
+                      steps=([same_note] if same_note else []) + steps + [f"add the EPUB to your existing book #{o['calibre_id']}"] +
                             ([f"remove {', '.join(drop)} from it (backed up first)"] if drop else []) +
                             ["move the original to the trash"])
         else:
             it.update(kind="add", steps=steps + ["write metadata and add a new book to Calibre",
                                                  "move the original to the trash"])
         items.append(it)
+
+    items = _pick_versions(conn, items)
 
     if setting(conn, "delete_duplicates") == "1":
         for r in conn.execute("SELECT * FROM ingest_files WHERE bucket='duplicate' AND duplicate_of LIKE 'calibre:%' "
@@ -222,8 +341,118 @@ def plan_library(conn) -> dict:
                       "title": r["title"], "authors": r["authors"], "format": src, "remove": drop, "select": True,
                       "steps": [f"convert {src} to EPUB and add it to the book",
                                 f"remove {', '.join(drop)} (backed up to the trash first)"]})
-    return {"items": items, "counts": {"convert_existing": len(items)}, "selected": len(items),
+    items += library_duplicates(conn)
+    counts: dict[str, int] = {}
+    for it in items:
+        counts[it["kind"]] = counts.get(it["kind"], 0) + 1
+    return {"items": items, "counts": counts, "selected": sum(1 for i in items if i["select"]),
             "target": target(conn).describe(), "calibre_tools": calibre_cli.version()}
+
+
+def _calibre_epub_info(conn, calibre_id: int) -> dict | None:
+    r = conn.execute("SELECT relpath FROM calibre_files WHERE calibre_id=? AND format='EPUB'", (calibre_id,)).fetchone()
+    return _inspect(_calibre_root(conn) / r["relpath"]) if r and r["relpath"] else None
+
+
+def library_duplicates(conn) -> list[dict]:
+    """Books that are in Calibre more than once (same Open Library record, or same title and author): keep the best
+    copy, move any format only the other copy has onto it, and remove the other copy.
+
+    Copies Tomearr itself added are selected; duplicates that were already there are listed for you to tick.
+    """
+    rf = replace_formats(conn)
+    books = [dict(r) for r in conn.execute("SELECT calibre_id, title, authors, formats, work_key, has_cover "
+                                           "FROM library_books ORDER BY calibre_id")]
+    if len(books) < 2:
+        return []
+    parent = {b["calibre_id"]: b["calibre_id"] for b in books}
+
+    def find(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+    by_work: dict[str, int] = {}
+    by_surname: dict[str, list[dict]] = {}
+    for b in books:
+        b["_fmts"] = [f for f in (b["formats"] or "").split(",") if f]
+        b["_tp"], b["_sn"] = identity.title_parts(b["title"]), identity.surnames(b["authors"] or "")
+        if b["work_key"]:
+            if b["work_key"] in by_work:
+                parent[find(b["calibre_id"])] = find(by_work[b["work_key"]])
+            else:
+                by_work[b["work_key"]] = b["calibre_id"]
+        for sn in b["_sn"]:
+            for o in by_surname.get(sn, []):
+                if identity.same_title(b["_tp"], o["_tp"]):
+                    parent[find(b["calibre_id"])] = find(o["calibre_id"])
+            by_surname.setdefault(sn, []).append(b)
+    groups: dict[int, list[dict]] = {}
+    for b in books:
+        groups.setdefault(find(b["calibre_id"]), []).append(b)
+    ours = {r[0] for r in conn.execute("SELECT calibre_id FROM imports WHERE action='add' AND status='done'")}
+    items = []
+    for g in groups.values():
+        if len(g) < 2:
+            continue
+        for b in g:
+            fmt = "EPUB" if "EPUB" in b["_fmts"] else max(b["_fmts"], key=lambda f: FORMAT_RANK.get(f, 1), default=None)
+            q, why = version_quality(fmt, _calibre_epub_info(conn, b["calibre_id"]) if fmt == "EPUB" else None)
+            b["_q"] = q + (5 if b["has_cover"] else 0) + len(b["_fmts"]) - b["calibre_id"] / 1e9   # older wins ties
+            b["_why"] = why
+        g.sort(key=lambda b: -b["_q"])
+        keep = g[0]
+        for d in g[1:]:
+            move = [f for f in d["_fmts"] if f not in keep["_fmts"]
+                    and not (f in rf and "EPUB" in keep["_fmts"]) and f != "ORIGINAL_EPUB"]
+            items.append({
+                "key": f"dup:{d['calibre_id']}", "kind": "remove_duplicate", "calibre_id": d["calibre_id"],
+                "keep_id": keep["calibre_id"], "move": move, "title": d["title"], "authors": d["authors"],
+                "format": ",".join(d["_fmts"]), "select": d["calibre_id"] in ours and keep["calibre_id"] != d["calibre_id"],
+                "steps": [f"same book as #{keep['calibre_id']} “{keep['title']}” ({', '.join(keep['_why'])}), "
+                          f"which is kept"]
+                         + ([f"move {', '.join(move)} onto #{keep['calibre_id']}"] if move else [])
+                         + [f"remove this copy (#{d['calibre_id']}: {', '.join(d['_fmts']) or 'no files'}); it goes to "
+                            "Calibre's trash bin and a backup goes to Tomearr's trash"]})
+    return items
+
+
+def _remove_duplicate(conn, settings, cal: Calibre, it: dict, trash: Path | None) -> dict:
+    dup, keep = it["calibre_id"], it["keep_id"]
+    if cal.book(keep) is None:
+        raise ImportError_(f"the copy to keep (#{keep}) is no longer in Calibre; sync the library first")
+    if cal.book(dup) is None:
+        raise ImportError_(f"#{dup} is no longer in Calibre; sync the library first")
+    have = set(cal.formats(keep))
+    moved, backups = [], []
+    for f in it.get("move", []):
+        if f in have:
+            continue
+        r = conn.execute("SELECT relpath FROM calibre_files WHERE calibre_id=? AND format=?", (dup, f)).fetchone()
+        src = _calibre_root(conn) / r["relpath"] if r and r["relpath"] else None
+        if not src or not src.is_file():
+            raise ImportError_(f"can't find #{dup}'s {f} file to move it; sync the library first")
+        stage = _config_dir(settings) / "staging" / f"dup{dup}"
+        stage.mkdir(parents=True, exist_ok=True)
+        tmp = stage / f"book.{f.lower()}"
+        shutil.copy2(src, tmp)
+        cal.add_format(keep, tmp)
+        shutil.rmtree(stage, ignore_errors=True)
+        if f not in cal.formats(keep):
+            raise ImportError_(f"Calibre didn't confirm {f} was added to #{keep}")
+        moved.append(f)
+    if trash is not None:
+        for f in cal.formats(dup):
+            b = _backup_calibre_format(conn, dup, f, trash)
+            if b:
+                backups.append({"format": f, "backup": str(b)})
+    cal.remove(dup, permanent=False)
+    conn.execute("DELETE FROM library_books WHERE calibre_id=?", (dup,))
+    conn.execute("DELETE FROM calibre_files WHERE calibre_id=?", (dup,))
+    return {"action": "remove_duplicate", "calibre_id": dup, "work_key": it.get("work_key"),
+            "removed_json": orjson.dumps(backups).decode(),
+            "meta_json": orjson.dumps({"kept": keep, "moved_formats": moved, "title": it.get("title"),
+                                       "authors": it.get("authors")}).decode()}
 
 
 # --- doing it --------------------------------------------------------------------------------------------------
@@ -329,9 +558,9 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
         t = _retire(conn, src, trash, r, seeding)
         return {"action": "seeding_done", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t) if t else None}
 
-    if kind == "already_have":
+    if kind in ("already_have", "other_version"):
         t = _retire(conn, src, trash, r, seeding)
-        return {"action": "already_have", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t) if t else None,
+        return {"action": kind, "path": r["path"], "sha256": r["sha256"], "trash_path": str(t) if t else None,
                 "calibre_id": it.get("calibre_id")}
 
     if kind == "pdf_convert":
@@ -484,7 +713,8 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
     p = plan_library(conn) if library else plan(conn)
     items = [i for i in p["items"] if (i["key"] in keys if keys is not None else i["select"])]
     items = [i for i in items if i["kind"] not in ("pdf_hold", "pdf_waiting", "seeding")]
-    needs_calibre = any(i["kind"] in ("add", "add_format", "convert_existing", "replace") for i in items)
+    needs_calibre = any(i["kind"] in ("add", "add_format", "convert_existing", "replace", "remove_duplicate")
+                        for i in items)
     needs_ingest_write = any("file_id" in i or i["kind"] == "cleanup" for i in items)
     if needs_ingest_write and not os.access(_ingest_root(conn), os.W_OK):
         raise ImportError_(f"The ingest folder {_ingest_root(conn)} is read-only. Remove ':ro' from the /ingest "
@@ -497,10 +727,20 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
     trash = None if int(setting(conn, "trash_days") or 0) == 0 else _trash_dir(settings, batch or 0)
     seeding = grabs.seeding_names(conn)[0] if not library else set()
     done = failed = 0
+    failed_keys: set[str] = set()
+    done_keys: set[str] = set()
     added: dict[str, int] = {}     # work -> Calibre book added earlier in this run
     for n, it in enumerate(items):
         if cancelled():
             raise ImportCancelled()
+        if it["kind"] == "other_version" and it.get("best_key") not in done_keys:
+            why = ("the better version of this book failed to import" if it.get("best_key") in failed_keys
+                   else "the better version wasn't imported in this run")
+            _log(conn, batch=batch, action="other_version", path=it.get("path"), work_key=it.get("work_key"),
+                 status="failed", error=f"kept: {why}")
+            conn.commit()
+            failed += 1
+            continue
         if it["kind"] in ("add", "add_format") and it.get("work_key") in added:
             # Another file of a book this run already added as EPUB: Calibre keeps one EPUB per book.
             cid = added[it["work_key"]]
@@ -510,6 +750,8 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
         try:
             if it["kind"] == "convert_existing":
                 res = _convert_existing(conn, settings, cal, it, trash)
+            elif it["kind"] == "remove_duplicate":
+                res = _remove_duplicate(conn, settings, cal, it, trash)
             elif it["kind"] == "cleanup":
                 res = _cleanup_folder(conn, it, trash)
             else:
@@ -531,9 +773,11 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
             _log(conn, batch=batch, status="done", **res)
             if res.get("action") in ("add", "add_format") and res.get("work_key"):
                 added[res["work_key"]] = res["calibre_id"]
+            done_keys.add(it["key"])
             done += 1
         except (CalibreCLIError, ImportError_, OSError, zipfile.BadZipFile) as exc:
             conn.rollback()
+            failed_keys.add(it["key"])
             _log(conn, batch=batch, action=it["kind"], path=it.get("path"), calibre_id=it.get("calibre_id"),
                  work_key=it.get("work_key"), source_format=it.get("format"), status="failed", error=str(exc)[:500])
             failed += 1
@@ -564,6 +808,9 @@ def undo(conn, import_id: int, settings=None) -> dict:
         raise KeyError(import_id)
     if r["status"] != "done":
         raise ImportError_(f"this import is {r['status']}, nothing to undo")
+    if r["action"] == "remove_duplicate":
+        raise ImportError_("restore the removed copy from Calibre's trash bin (Calibre: Remove books ▸ Restore "
+                           "recently deleted); a backup of its files is also in Tomearr's trash")
     if r["action"] == "set_cover":
         raise ImportError_("Calibre can't remove a cover from the command line; change it in Calibre or Calibre-Web")
     if (orjson.loads(r["meta_json"] or "{}") or {}).get("no_undo"):
@@ -640,8 +887,8 @@ def history(conn, limit: int = 200) -> list[dict]:
 # --- PDFs ---------------------------------------------------------------------------------------------------------
 
 def set_compare_choice(conn, file_id: int, choice: str | None) -> dict:
-    if choice not in ("calibre", "ingest", "skip", None):
-        raise ImportError_("choice must be calibre, ingest or skip")
+    if choice not in ("calibre", "ingest", "skip", "separate", None):
+        raise ImportError_("choice must be calibre, ingest, skip or separate")
     cur = conn.execute("UPDATE ingest_files SET compare_choice=? WHERE id=?", (choice, file_id))
     if not cur.rowcount:
         raise KeyError(file_id)

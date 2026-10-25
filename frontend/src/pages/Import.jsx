@@ -15,14 +15,16 @@ const KIND = {
   pdf_waiting: ["PDF, check result", "Waiting for your approval"],
   convert_existing: ["Convert", "Book in Calibre converted to EPUB"],
   set_cover: ["Cover", "Cover added from Open Library"],
+  other_version: ["Other versions", "Another version of a book imported in this run; the best one was kept"],
+  remove_duplicate: ["Duplicate books", "Another copy of a book in Calibre, removed (in Calibre's trash bin)"],
   seeding: ["Still seeding", "Imported; left in place while Deluge seeds it"],
   seeding_done: ["Done seeding", "Imported earlier; removed now that the torrent left Deluge"],
 };
 const ORDER = ["add", "add_format", "replace", "convert_existing", "pdf_convert", "unpack", "delete_duplicate", "already_have",
-  "seeding_done", "cleanup", "pdf_waiting", "pdf_hold", "seeding"];
+  "other_version", "remove_duplicate", "seeding_done", "cleanup", "pdf_waiting", "pdf_hold", "seeding"];
 
-const TRASH_GROUPS = ["already_have", "delete_duplicate", "seeding_done"];
-const CHOICE_LABEL = { calibre: "keeping Calibre's", ingest: "using this one", skip: "deciding later" };
+const TRASH_GROUPS = ["already_have", "delete_duplicate", "seeding_done", "other_version"];
+const CHOICE_LABEL = { calibre: "keeping Calibre's", ingest: "using this one", skip: "deciding later", separate: "a different book" };
 
 function Row({ label, a, b, better }) {
   return (
@@ -187,10 +189,10 @@ function PlanView({ library, onRun, running }) {
       )}
       <div className="card">
         <div className="card-head">
-          <h2>{library ? "Convert books already in Calibre" : "Ready to import"}</h2>
+          <h2>{library ? "Books already in Calibre" : "Ready to import"}</h2>
           <div className="actions">
             <button className="primary" disabled={running || !chosen.length} onClick={() => onRun(chosen, library)}>
-              {library ? "Convert" : "Import"} {formatNumber(chosen.length)}
+              {library ? "Run" : "Import"} {formatNumber(chosen.length)}
             </button>
           </div>
         </div>
@@ -199,7 +201,7 @@ function PlanView({ library, onRun, running }) {
           number of days in Settings) and every step can be undone below.
         </p>
         {groups.length === 0 ? (
-          <p className="muted">{library ? "Every book in Calibre already has an EPUB (or only formats you keep)." : "Nothing is ready. Accept files on the Review page, or wait for confident matches from the next scan."}</p>
+          <p className="muted">{library ? "Every book in Calibre has an EPUB (or only formats you keep), and no book is in Calibre twice." : "Nothing is ready. Accept files on the Review page, or wait for confident matches from the next scan."}</p>
         ) : (
           groups.map(([k, items]) => (
             <div key={k} className="plan-group">
@@ -230,6 +232,15 @@ function PlanView({ library, onRun, running }) {
                         </span>
                       </span>
                     </label>
+                    {(i.same_note || i.kind === "other_version") && i.file_id && (
+                      <button
+                        className="link"
+                        title="Tomearr thinks this is the same book by its title and author. If it isn't, it's added as a book of its own."
+                        onClick={() => api.compareChoice(i.file_id, "separate").then(load).catch((e) => setErr(e.message))}
+                      >
+                        not the same book?
+                      </button>
+                    )}
                     {(i.kind === "already_have" || i.kind === "replace") && (
                       <button className="link" onClick={() => setOpen(open === i.key ? null : i.key)}>
                         {open === i.key ? "close" : "compare"}
