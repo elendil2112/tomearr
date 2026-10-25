@@ -155,7 +155,8 @@ author".
    updates `metadata.db`; if you already own the book, the EPUB is added to that book instead,
 5. Calibre is asked to confirm the EPUB is there; only then are MOBI/AZW3/AZW/PRC removed from that book (each
    copied to the trash first; the list is in Settings),
-6. the original leaves the ingest folder for `/config/trash`, kept 14 days by default, then deleted.
+6. the original leaves the ingest folder for `/config/trash`, kept 14 days by default, then deleted. With the
+   trash set to 0 days it is deleted as soon as Calibre confirms (and that import can no longer be undone).
 
 A failure part-way rolls back what reached Calibre. Every import can be undone (one book, or a whole run): the
 book or EPUB comes out of Calibre, replaced formats go back in, and the original returns to the ingest folder.

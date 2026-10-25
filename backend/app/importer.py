@@ -35,6 +35,8 @@ DEFAULTS = {
 }
 SECRET = "calibre_password"
 NO_CONVERT = {"EPUB"}
+# Imports that deleted something; with the trash off there's nothing to put back, so they can't be undone.
+NO_UNDO_WITHOUT_TRASH = {"add", "add_format", "convert_existing", "delete_duplicate", "already_have", "unpack"}
 
 
 class ImportCancelled(Exception):
@@ -198,7 +200,11 @@ def _trash_dir(settings, batch) -> Path:
     return _config_dir(settings) / "trash" / f"{stamp}-job{batch}"
 
 
-def _move_to_trash(src: Path, trash: Path, rel: str) -> Path:
+def _move_to_trash(src: Path, trash: Path | None, rel: str) -> Path | None:
+    """Move an original into the trash, or delete it outright when the trash is off (trash_days = 0)."""
+    if trash is None:
+        src.unlink()
+        return None
     dst = trash / "ingest" / rel
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
@@ -230,9 +236,13 @@ def _log(conn, **kw) -> int:
     return cur.lastrowid
 
 
-def _replace_old_formats(conn, cal: Calibre, cid: int, drop: list[str], trash: Path) -> tuple[list, list]:
+def _replace_old_formats(conn, cal: Calibre, cid: int, drop: list[str], trash: Path | None) -> tuple[list, list]:
     removed, kept = [], []
     for f in drop:
+        if trash is None:           # trash off: remove without keeping a copy (as asked)
+            cal.remove_format(cid, f)
+            removed.append({"format": f, "backup": None})
+            continue
         backup = _backup_calibre_format(conn, cid, f, trash)
         if backup is None:
             kept.append(f)          # never remove what we couldn't back up
@@ -257,7 +267,7 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
     if kind == "delete_duplicate":
         t = _move_to_trash(src, trash, r["path"])
         conn.execute("DELETE FROM ingest_files WHERE id=?", (r["id"],))
-        return {"action": "delete_duplicate", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t),
+        return {"action": "delete_duplicate", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t) if t else None,
                 "calibre_id": it.get("calibre_id")}
 
     if kind == "unpack":
@@ -270,13 +280,13 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
             os.utime(f, (old, old))
         t = _move_to_trash(src, trash, r["path"])
         conn.execute("DELETE FROM ingest_files WHERE id=?", (r["id"],))
-        return {"action": "unpack", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t),
+        return {"action": "unpack", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t) if t else None,
                 "meta_json": orjson.dumps({"extracted": [str(f.relative_to(root)) for f in files]}).decode()}
 
     if kind == "already_have":
         t = _move_to_trash(src, trash, r["path"])
         conn.execute("DELETE FROM ingest_files WHERE id=?", (r["id"],))
-        return {"action": "already_have", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t),
+        return {"action": "already_have", "path": r["path"], "sha256": r["sha256"], "trash_path": str(t) if t else None,
                 "calibre_id": it.get("calibre_id")}
 
     if kind == "pdf_convert":
@@ -339,7 +349,7 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
     shutil.rmtree(stage, ignore_errors=True)
     return {"action": kind, "path": r["path"], "sha256": r["sha256"], "source_format": r["format"], "work_key": wk,
             "calibre_id": cid, "added_format": "EPUB", "removed_json": orjson.dumps(removed).decode(),
-            "trash_path": str(t),
+            "trash_path": str(t) if t else None,
             "meta_json": orjson.dumps({**{k: v for k, v in meta.items() if k != "cover"}, "cover_added": "cover" in meta,
                                        "kept_formats": kept}).decode()}
 
@@ -393,7 +403,8 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
     if needs_calibre:
         progress({"step": "checking the Calibre connection"})
         cal.test()
-    trash = _trash_dir(settings, batch or 0)
+    # trash_days = 0 means no trash: originals and replaced formats are deleted as soon as Calibre confirms
+    trash = None if int(setting(conn, "trash_days") or 0) == 0 else _trash_dir(settings, batch or 0)
     done = failed = 0
     added: dict[str, int] = {}     # work -> Calibre book added earlier in this run
     for n, it in enumerate(items):
@@ -410,6 +421,9 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
                 res = _convert_existing(conn, settings, cal, it, trash)
             else:
                 res = _import_file(conn, settings, cal, it, batch or 0, trash)
+            if trash is None and res.get("action") in NO_UNDO_WITHOUT_TRASH:
+                meta = orjson.loads(res.get("meta_json") or "{}") or {}
+                res["meta_json"] = orjson.dumps({**meta, "no_undo": True}).decode()
             _log(conn, batch=batch, status="done", **res)
             if res.get("action") in ("add", "add_format") and res.get("work_key"):
                 added[res["work_key"]] = res["calibre_id"]
@@ -448,6 +462,8 @@ def undo(conn, import_id: int, settings=None) -> dict:
         raise ImportError_(f"this import is {r['status']}, nothing to undo")
     if r["action"] == "set_cover":
         raise ImportError_("Calibre can't remove a cover from the command line; change it in Calibre or Calibre-Web")
+    if (orjson.loads(r["meta_json"] or "{}") or {}).get("no_undo"):
+        raise ImportError_("the original was deleted right away (trash set to 0 days), so this import can't be undone")
     cal = Calibre(target(conn))
     a = r["action"]
     if a == "add":
@@ -483,6 +499,7 @@ def undo(conn, import_id: int, settings=None) -> dict:
 
 def undo_batch(conn, batch: int, settings=None) -> dict:
     ids = [r[0] for r in conn.execute("SELECT id FROM imports WHERE batch=? AND status='done' AND action != 'set_cover' "
+                                      "AND coalesce(json_extract(meta_json, '$.no_undo'), 0) = 0 "
                                       "ORDER BY id DESC", (batch,))]
     out, errors = [], []
     for i in ids:
