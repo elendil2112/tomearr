@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatNumber, languageName } from "../api.js";
 import { Cover } from "../components/WorkList.jsx";
+import ReleaseSearch from "../components/Releases.jsx";
 
 const FORMAT_LABEL = { ebook: "Ebook", print: "Print", audio: "Audio" };
 
@@ -54,6 +55,7 @@ export default function Work({ olKey }) {
       </div>
 
       <WorkMonitor work={work} onChange={setWork} />
+      <WorkSearch work={work} />
 
       {work.library_books?.length > 0 && (
         <div className="notice ok-notice">
@@ -164,6 +166,7 @@ export default function Work({ olKey }) {
 const STATUS_TEXT = {
   wanted: "Wanted",
   in_ingest: "Wanted, and a file for it is waiting in the ingest folder",
+  downloading: "Wanted, and downloading",
   ignored: "Ignored",
   filtered: "Not wanted: filtered out by your profile",
   unmonitored: "Not wanted",
@@ -176,7 +179,7 @@ function WorkMonitor({ work, onChange }) {
     await api.setWorkState(work.ol_key, state);
     onChange({ ...work, monitor_status: (await api.work(work.ol_key)).monitor_status });
   };
-  const wanted = s.status === "wanted" || s.status === "in_ingest";
+  const wanted = ["wanted", "in_ingest", "downloading"].includes(s.status);
   return (
     <div className={`notice ${wanted ? "ok-notice" : ""}`} style={wanted ? {} : { background: "var(--card)", borderColor: "var(--line)" }}>
       <b>{STATUS_TEXT[s.status]}</b>
@@ -192,6 +195,22 @@ function WorkMonitor({ work, onChange }) {
           <button className="mini" onClick={() => set("wanted")}>Want this book</button>
         )}
       </span>
+    </div>
+  );
+}
+
+function WorkSearch({ work }) {
+  const [open, setOpen] = useState(false);
+  if (work.monitor_status?.status === "owned") return null;
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Releases</h2>
+        <div className="actions">
+          <button onClick={() => setOpen(!open)}>{open ? "Close" : "Search indexers"}</button>
+        </div>
+      </div>
+      {open && <ReleaseSearch workKey={work.ol_key} />}
     </div>
   );
 }

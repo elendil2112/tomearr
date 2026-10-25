@@ -3,7 +3,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import db, importer, ingest, library
+from . import db, grabs, importer, ingest, library
 
 
 def _minutes_since(ts: str | None) -> float:
@@ -15,6 +15,7 @@ def _minutes_since(ts: str | None) -> float:
 
 class Scheduler:
     TICK = 20  # seconds
+    POLL_MIN = 1  # check download clients every minute while something is downloading
 
     def __init__(self, settings, runner):
         self.settings, self.runner = settings, runner
@@ -66,6 +67,21 @@ class Scheduler:
                 if last_scan and (not last_import or last_scan > last_import) and importer.plan(conn)["selected"]:
                     self.runner.submit("calibre_import", {"scheduled": True})
                     submitted.append("calibre_import")
+            # follow downloads; when one finishes, scan the ingest folder for it
+            if _minutes_since(db.get_meta(conn, "grabs_polled_at")) >= self.POLL_MIN and grabs.active(conn):
+                db.set_meta(conn, "grabs_polled_at", conn.execute("SELECT datetime('now')").fetchone()[0])
+                if grabs.poll(conn)["completed"]:
+                    # scan once the new files have settled (a scan any sooner would skip them as still arriving)
+                    settle = int(ingest.setting(conn, "ingest_settle_sec") or 0)
+                    db.set_meta(conn, "scan_after", conn.execute(
+                        "SELECT datetime('now', ?)", (f"+{settle + 10} seconds",)).fetchone()[0])
+            due = db.get_meta(conn, "scan_after")
+            if due and due <= conn.execute("SELECT datetime('now')").fetchone()[0] \
+                    and not self._active(conn, "ingest_scan"):
+                db.set_meta(conn, "scan_after", "")
+                if Path(ingest.setting(conn, "ingest_path")).is_dir():
+                    self.runner.submit("ingest_scan", {"scheduled": True, "reason": "download finished"})
+                    submitted.append("ingest_scan")
             # purge the trash once a day
             if _minutes_since(db.get_meta(conn, "trash_purged_at")) >= 24 * 60:
                 importer.purge_trash(conn, self.settings)

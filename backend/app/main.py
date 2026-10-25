@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 import orjson
@@ -7,7 +8,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import calibre_cli, compare, covers, db, importer, ingest, isbn, library, monitor, review, search
+from . import (calibre_cli, clients, compare, covers, db, grabs, importer, ingest, isbn, library, monitor,
+               prowlarr, review, search)
 from .scheduler import Scheduler
 from .config import KINDS, get_settings
 from .jobs import JobRunner
@@ -45,6 +47,27 @@ class SettingsBody(BaseModel):
     profile_languages: str | None = None
     profile_min_editions: int | None = None
     profile_exclude_collections: bool | None = None
+    prowlarr_url: str | None = None
+    prowlarr_api_key: str | None = None      # write-only, like every *_key / password below
+    deluge_url: str | None = None
+    deluge_password: str | None = None
+    deluge_label: str | None = None
+    deluge_path: str | None = None
+    sab_url: str | None = None
+    sab_api_key: str | None = None
+    sab_category: str | None = None
+    release_max_size_mb: int | None = None
+    release_min_seeders: int | None = None
+    keep_seeding: bool | None = None
+
+
+class GrabBody(BaseModel):
+    work_key: str
+    release_id: str
+
+
+class ClientTestBody(BaseModel):
+    client: str                       # prowlarr | deluge | sabnzbd
 
 
 class ImportRun(BaseModel):
@@ -105,10 +128,14 @@ class MatchBody(BaseModel):
 
 LANG_RE = re.compile(r"^(all|[a-z]{3})$")
 DEFAULT_SETTINGS = {"language": "eng", "calibre_path": library.DEFAULT_CALIBRE_PATH, **ingest.DEFAULTS,
-                    **importer.DEFAULTS, **monitor.PROFILE_DEFAULTS}
+                    **importer.DEFAULTS, **monitor.PROFILE_DEFAULTS, **grabs.DEFAULTS}
 NUMERIC_SETTINGS = {"ingest_interval_min": (0, 1440), "ingest_settle_sec": (0, 86400),
                     "library_sync_interval_min": (0, 10080), "trash_days": (0, 3650),
-                    "profile_min_editions": (0, 1000)}
+                    "profile_min_editions": (0, 1000), "release_max_size_mb": (0, 100000),
+                    "release_min_seeders": (0, 1000)}
+
+
+BOOL_SETTINGS = ("delete_duplicates", "import_auto", "fetch_covers", "profile_exclude_collections", "keep_seeding")
 
 
 class DownloadRequest(BaseModel):
@@ -226,9 +253,11 @@ def create_app() -> FastAPI:
         out = {k: db.get_meta(conn, f"setting_{k}", v) for k, v in DEFAULT_SETTINGS.items()}
         for k in NUMERIC_SETTINGS:
             out[k] = float(out[k]) if "." in str(out[k]) else int(out[k])
-        for k in ("delete_duplicates", "import_auto", "fetch_covers", "profile_exclude_collections"):
+        for k in BOOL_SETTINGS:
             out[k] = str(out[k]) == "1"
         out["calibre_password_set"] = bool(db.get_meta(conn, "setting_calibre_password"))
+        for k in grabs.SECRETS:
+            out[f"{k}_set"] = bool(db.get_meta(conn, f"setting_{k}"))
         return out
 
     @app.get("/api/settings")
@@ -273,6 +302,22 @@ def create_app() -> FastAPI:
                     db.set_meta(conn, f"setting_{k}", v.strip())
             if body.calibre_password is not None:
                 db.set_meta(conn, "setting_calibre_password", body.calibre_password)
+            for k in ("prowlarr_url", "deluge_url", "sab_url"):
+                v = getattr(body, k)
+                if v is not None:
+                    u = v.strip().rstrip("/")
+                    if u and not re.match(r"^https?://[^\s/]+(:\d+)?(/\S*)?$", u):
+                        raise HTTPException(400, f"{k.split('_')[0].capitalize()} address should look like "
+                                                 "http://192.168.0.229:9696")
+                    db.set_meta(conn, f"setting_{k}", u)
+            for k in ("deluge_label", "deluge_path", "sab_category"):
+                v = getattr(body, k)
+                if v is not None:
+                    db.set_meta(conn, f"setting_{k}", v.strip())
+            for k in grabs.SECRETS:
+                v = getattr(body, k)
+                if v is not None:
+                    db.set_meta(conn, f"setting_{k}", v.strip())
             if body.replace_formats is not None:
                 fm = ",".join(sorted({f.strip().upper() for f in body.replace_formats.split(",")
                                       if f.strip() and f.strip().upper() != "EPUB"}))
@@ -282,7 +327,7 @@ def create_app() -> FastAPI:
                 if any(not re.match(r"^[a-z]{3}$", l) for l in langs):
                     raise HTTPException(400, "languages are 3-letter codes like eng, spa (blank = any language)")
                 db.set_meta(conn, "setting_profile_languages", ",".join(langs))
-            for k in ("delete_duplicates", "import_auto", "fetch_covers", "profile_exclude_collections"):
+            for k in BOOL_SETTINGS:
                 v = getattr(body, k)
                 if v is not None:
                     db.set_meta(conn, f"setting_{k}", "1" if v else "0")
@@ -610,6 +655,63 @@ def create_app() -> FastAPI:
     @app.get("/api/wanted/new")
     def wanted_new(years: int = Query(2, ge=0, le=20)):
         return monitoring(lambda c: monitor.new_releases(c, years))
+
+    # --- indexers and downloads (Phases 8-9) -----------------------------------
+    def downloading(fn):
+        conn = conn_()
+        try:
+            return fn(conn)
+        except KeyError:
+            raise HTTPException(404, "not found")
+        except (prowlarr.ProwlarrError, clients.ClientError, grabs.GrabError) as exc:
+            raise HTTPException(502, str(exc))
+        finally:
+            conn.close()
+
+    @app.post("/api/downloads/test")
+    def downloads_test(body: ClientTestBody):
+        def run(c):
+            if body.client == "prowlarr":
+                return prowlarr.Prowlarr(**prowlarr.config(c), timeout=20).test()
+            if body.client == "deluge":
+                return clients.deluge(c).test()
+            if body.client == "sabnzbd":
+                return clients.sabnzbd(c).test()
+            raise HTTPException(400, "client must be prowlarr, deluge or sabnzbd")
+        try:
+            return downloading(run)
+        except HTTPException as exc:
+            if exc.status_code == 502:
+                return {"ok": False, "message": exc.detail}
+            raise
+
+    @app.get("/api/releases/{work_key}")
+    def releases_search(work_key: str):
+        return downloading(lambda c: grabs.search_releases(c, work_key))
+
+    @app.post("/api/grabs")
+    def grab(body: GrabBody):
+        # a second grab for the same book is allowed (the first one may have stalled)
+        return downloading(lambda c: grabs.grab(c, body.work_key, body.release_id))
+
+    @app.get("/api/grabs")
+    def grab_list():
+        return downloading(grabs.history)
+
+    @app.post("/api/grabs/refresh")
+    def grab_refresh():
+        def run(c):
+            res = grabs.poll(c)
+            if res["completed"]:
+                settle = int(ingest.setting(c, "ingest_settle_sec") or 0)
+                db.set_meta(c, "scan_after", c.execute("SELECT datetime('now', ?)",
+                                                       (f"+{settle + 10} seconds",)).fetchone()[0])
+            return {**res, "grabs": grabs.history(c)}
+        return downloading(run)
+
+    @app.delete("/api/grabs/{grab_id}")
+    def grab_remove(grab_id: int):
+        return downloading(lambda c: {"removed": grabs.remove(c, grab_id)})
 
     # --- frontend ---------------------------------------------------------
     static = settings.static_dir

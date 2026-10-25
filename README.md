@@ -23,7 +23,8 @@ The full phased plan lives in the project notes; in short:
 - [x] **Phase 5: review.** Keyboard-driven review of everything the matcher wasn't sure about.
 - [x] **Phase 6: import.** Convert to EPUB and add to Calibre with Calibre's own tools; dry run, trash and undo.
 - [x] **Phase 7: monitoring.** Monitored authors, a metadata profile, per-book want/ignore, the Wanted list.
-- [ ] **Phases 8–10: the *arr part.** Prowlarr, download clients, automation.
+- [x] **Phases 8–9: indexers and downloads.** Search Prowlarr, score releases, grab to Deluge / SABnzbd, follow them.
+- [ ] **Phase 10: automation.** Search and grab wanted books on a schedule.
 
 ## Run on Unraid (or any Docker host)
 
@@ -213,6 +214,35 @@ folder), **wanted**, **ignored**, **filtered** or not monitored. **Want** and **
 beat the author's setting. **New releases** lists recent books by monitored authors; Open Library only knows about
 a book once it's in a monthly dump, so rebuild the catalog now and then.
 
+## Indexers and downloads
+
+Tomearr doesn't talk to indexers itself: **Prowlarr** already knows all of them, torrent and usenet. In Settings →
+Indexers and download clients, give it Prowlarr's address and API key, Deluge's web UI address and password, and
+SABnzbd's address and API key. Each has a Test button.
+
+Press **Search** next to a wanted book (on the Wanted page, an author page, or a book's page). Tomearr asks Prowlarr
+for book releases and checks each one against the book:
+
+- passed over: audiobooks, comics, magazines, another language than your profile's, a name that doesn't contain the
+  title, too big, no seeders, DJVU;
+- ranked by format (EPUB, then AZW3/MOBI, which get converted, then PDF), how well the name matches the title and
+  author, extra words (a different book in the series, a companion), seeders, and retail tags.
+
+**Grab** sends a torrent to Deluge (with your label) or an NZB to SABnzbd (with your category). Tomearr fetches the
+.torrent/.nzb through Prowlarr and uploads it, so the client doesn't need to reach your indexers. It then checks the
+clients every minute: the **Downloads** tab shows progress. When a download finishes, the ingest folder is scanned
+once the files have settled, and from there it's the normal flow: matched (a file named like the release you grabbed
+is matched to that book), then imported. The book shows as *Downloading*, then *In ingest*, then *Owned*.
+
+**Point the downloads at the ingest folder.** Set the Deluge label's "move completed to" folder, or the SABnzbd
+category's folder, to the folder you mount as `/ingest` (on Tower, `/mnt/user/data/download/completed/ebooks`).
+
+**Seeding.** When the ingest folder is also Deluge's download folder, moving an imported file away would break the
+torrent. So a file that belongs to a torrent still in Deluge (any torrent, not only Tomearr's) is imported but left
+where it is, shown on the Import page as *Still seeding*. Once you remove the torrent from Deluge, it shows up as
+*Done seeding* and goes to the trash with the next import. If Deluge can't be reached, Tomearr assumes its own
+torrents are still seeding. Turn this off in Settings if your torrents download somewhere else.
+
 ## How search works
 
 - Authors and works are loaded from the dumps. Works with no author are skipped by default (toggle on the Catalog page).
@@ -242,6 +272,10 @@ a book once it's in a monthly dump, so rebuild the catalog now and then.
 | `PUT /api/monitor/works/{key}` | `{"state": "wanted"\|"ignored"\|null}` |
 | `GET /api/wanted?q=&waiting=` | wanted books (`waiting=false` hides ones with a file in ingest) |
 | `GET /api/wanted/new?years=` | recent books by monitored authors |
+| `GET /api/releases/{work_key}` | search Prowlarr for a book; ranked releases with reasons and rejections |
+| `POST /api/grabs` | `{"work_key": ..., "release_id": ...}` sends a release to Deluge or SABnzbd |
+| `GET /api/grabs`, `POST /api/grabs/refresh`, `DELETE /api/grabs/{id}` | downloads / check the clients now / forget one |
+| `POST /api/downloads/test` | `{"client": "prowlarr"\|"deluge"\|"sabnzbd"}` |
 | `GET/PUT /api/settings` | `language`, `calibre_path`, `ingest_path`, `ingest_interval_min`, `ingest_settle_sec`, `library_sync_interval_min`, import options, `profile_languages`, `profile_min_editions`, `profile_exclude_collections` |
 | `POST /api/library/test` | check a Calibre folder (`{"path": ...}`, defaults to the setting) |
 | `POST /api/library/sync` | sync job (`{"rematch": true}` re-matches everything except manual matches) |

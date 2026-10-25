@@ -15,11 +15,13 @@ const KIND = {
   pdf_waiting: ["PDF, check result", "Waiting for your approval"],
   convert_existing: ["Convert", "Book in Calibre converted to EPUB"],
   set_cover: ["Cover", "Cover added from Open Library"],
+  seeding: ["Still seeding", "Imported; left in place while Deluge seeds it"],
+  seeding_done: ["Done seeding", "Imported earlier; removed now that the torrent left Deluge"],
 };
 const ORDER = ["add", "add_format", "replace", "convert_existing", "pdf_convert", "unpack", "delete_duplicate", "already_have",
-  "cleanup", "pdf_waiting", "pdf_hold"];
+  "seeding_done", "cleanup", "pdf_waiting", "pdf_hold", "seeding"];
 
-const TRASH_GROUPS = ["already_have", "delete_duplicate"];
+const TRASH_GROUPS = ["already_have", "delete_duplicate", "seeding_done"];
 const CHOICE_LABEL = { calibre: "keeping Calibre's", ingest: "using this one", skip: "deciding later" };
 
 function Row({ label, a, b, better }) {
@@ -203,9 +205,11 @@ function PlanView({ library, onRun, running }) {
             <div key={k} className="plan-group">
               <h3>
                 {KIND[k]?.[0] || k} <span className="count">{items.length}</span>
-                <button className="link" onClick={() => setSel({ ...sel, ...Object.fromEntries(items.map((i) => [i.key, !items.every((x) => sel[x.key])])) })}>
-                  {items.every((x) => sel[x.key]) ? "none" : "all"}
-                </button>
+                {k !== "seeding" && (
+                  <button className="link" onClick={() => setSel({ ...sel, ...Object.fromEntries(items.map((i) => [i.key, !items.every((x) => sel[x.key])])) })}>
+                    {items.every((x) => sel[x.key]) ? "none" : "all"}
+                  </button>
+                )}
                 {TRASH_GROUPS.includes(k) && items.some((x) => sel[x.key]) && (
                   <button className="mini" disabled={running} onClick={() => onRun(items.filter((x) => sel[x.key]).map((x) => x.key), library)}>
                     Move {formatNumber(items.filter((x) => sel[x.key]).length)} checked to the trash now
@@ -216,7 +220,7 @@ function PlanView({ library, onRun, running }) {
                 {items.map((i) => (
                   <li key={i.key}>
                     <label>
-                      <input type="checkbox" checked={!!sel[i.key]} onChange={(e) => setSel({ ...sel, [i.key]: e.target.checked })} />
+                      <input type="checkbox" disabled={i.kind === "seeding"} checked={!!sel[i.key]} onChange={(e) => setSel({ ...sel, [i.key]: e.target.checked })} />
                       <span className="plan-what">
                         <span className="ing-path">{i.path || `${i.title} — ${i.authors}`}</span>
                         {i.work_title && <span className="muted"> → {i.work_title}</span>}
