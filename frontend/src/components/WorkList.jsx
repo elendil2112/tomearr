@@ -24,7 +24,41 @@ export function OwnedBadge({ owned }) {
   );
 }
 
-export default function WorkList({ works, showAuthors = false }) {
+const STATUS_LABEL = {
+  wanted: "Wanted",
+  in_ingest: "In ingest",
+  ignored: "Ignored",
+  filtered: "Filtered",
+};
+
+export function StatusBadge({ status, why }) {
+  if (!STATUS_LABEL[status]) return null;
+  return (
+    <span className={`status status-${status}`} title={why}>
+      {STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+/** The one action that makes sense for a book's current status. */
+export function StateButton({ work, onState }) {
+  if (!onState || work.status === "owned" || !work.status) return null;
+  const [label, next] =
+    work.override === "wanted"
+      ? ["Don’t want", null]
+      : work.override === "ignored"
+        ? ["Unignore", null]
+        : work.status === "wanted" || work.status === "in_ingest"
+          ? ["Ignore", "ignored"]
+          : ["Want", "wanted"];
+  return (
+    <button className="mini" onClick={() => onState(work, next)} title={work.status_why}>
+      {label}
+    </button>
+  );
+}
+
+export default function WorkList({ works, showAuthors = false, onState }) {
   return (
     <ul className="rows">
       {works.map((w) => (
@@ -36,6 +70,7 @@ export default function WorkList({ works, showAuthors = false }) {
               {w.subtitle && <span className="subtitle">: {w.subtitle}</span>}
             </a>
             <OwnedBadge owned={w.owned} />
+            <StatusBadge status={w.status} why={w.status_why} />
             <div className="row-meta">
               {showAuthors &&
                 w.authors?.map((a, i) => (
@@ -56,6 +91,8 @@ export default function WorkList({ works, showAuthors = false }) {
             </div>
             {w.subjects && <div className="row-subjects">{w.subjects.split(" | ").slice(0, 5).join(" · ")}</div>}
           </div>
+          {w.status === "filtered" && <span className="muted small-print why">{w.status_why}</span>}
+          <StateButton work={w} onState={onState} />
           <a className="mono ol-link" href={`https://openlibrary.org/works/${w.ol_key}`} target="_blank" rel="noreferrer">
             {w.ol_key}
           </a>

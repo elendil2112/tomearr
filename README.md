@@ -22,7 +22,8 @@ The full phased plan lives in the project notes; in short:
 - [x] **Phase 4: ingest scanner.** Identify and match every file in a drop folder, on an interval. Report only.
 - [x] **Phase 5: review.** Keyboard-driven review of everything the matcher wasn't sure about.
 - [x] **Phase 6: import.** Convert to EPUB and add to Calibre with Calibre's own tools; dry run, trash and undo.
-- [ ] **Phases 7–10: the *arr part.** Monitored authors, wanted list, Prowlarr, download clients, automation.
+- [x] **Phase 7: monitoring.** Monitored authors, a metadata profile, per-book want/ignore, the Wanted list.
+- [ ] **Phases 8–10: the *arr part.** Prowlarr, download clients, automation.
 
 ## Run on Unraid (or any Docker host)
 
@@ -191,6 +192,27 @@ user, so it needs one.
 The Docker image includes Calibre's official command-line build (`--build-arg CALIBRE_VERSION=x.y.z` pins one) and
 `bsdtar` for archives.
 
+## Wanted
+
+Open an author and press **Monitor this author**. Every book of theirs that you don't have in Calibre and that
+passes your profile goes on the **Wanted** list. The monitor setting can be changed later:
+
+| Monitor | Wanted |
+|---|---|
+| All books | every book that passes the profile and isn't in Calibre |
+| Future books only | only books that show up in the catalog after you chose this (after a catalog rebuild) |
+| Selected books only | only books you mark **Want** |
+| Not monitored | nothing (single books you marked Want stay wanted) |
+
+**The profile** (Settings → Which books count as wanted) decides which of an author's Open Library works count:
+English by default, at least 2 editions (books from the last two years need only one), and no collections, box
+sets, omnibuses or study guides. Filtered books show the reason on the author page.
+
+Every book has one status: **owned** (in Calibre), **in ingest** (wanted, and a file for it is in the ingest
+folder), **wanted**, **ignored**, **filtered** or not monitored. **Want** and **Ignore** on a single book always
+beat the author's setting. **New releases** lists recent books by monitored authors; Open Library only knows about
+a book once it's in a monthly dump, so rebuild the catalog now and then.
+
 ## How search works
 
 - Authors and works are loaded from the dumps. Works with no author are skipped by default (toggle on the Catalog page).
@@ -214,8 +236,13 @@ The Docker image includes Calibre's official command-line build (`--build-arg CA
 | `GET /api/search/authors?q=` | authors |
 | `GET /api/isbn/{isbn}` | editions and works for an ISBN |
 | `GET /api/works/{key}` | work detail with editions, ISBNs, ratings, reader counts |
-| `GET /api/authors/{key}` | author with works |
-| `GET/PUT /api/settings` | `language`, `calibre_path`, `ingest_path`, `ingest_interval_min`, `ingest_settle_sec`, `library_sync_interval_min` |
+| `GET /api/authors/{key}` | author with works, each with `status`; plus `monitor` and `counts` |
+| `GET /api/monitor/authors` | monitored authors with counts |
+| `PUT/DELETE /api/monitor/authors/{key}` | `{"monitor": "all"\|"future"\|"selected"\|"none"}` / stop monitoring |
+| `PUT /api/monitor/works/{key}` | `{"state": "wanted"\|"ignored"\|null}` |
+| `GET /api/wanted?q=&waiting=` | wanted books (`waiting=false` hides ones with a file in ingest) |
+| `GET /api/wanted/new?years=` | recent books by monitored authors |
+| `GET/PUT /api/settings` | `language`, `calibre_path`, `ingest_path`, `ingest_interval_min`, `ingest_settle_sec`, `library_sync_interval_min`, import options, `profile_languages`, `profile_min_editions`, `profile_exclude_collections` |
 | `POST /api/library/test` | check a Calibre folder (`{"path": ...}`, defaults to the setting) |
 | `POST /api/library/sync` | sync job (`{"rematch": true}` re-matches everything except manual matches) |
 | `GET /api/library?q=&filter=&offset=&limit=` | owned books; `filter`: all, matched, unmatched, low, not_epub, issues, manual |

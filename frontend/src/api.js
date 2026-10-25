@@ -19,6 +19,13 @@ const post = (path, body = {}) =>
     body: JSON.stringify(body),
   });
 
+const put = (path, body = {}) =>
+  request(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
 export const api = {
   status: () => request("/api/status"),
   jobs: () => request("/api/jobs?limit=12"),
@@ -70,6 +77,12 @@ export const api = {
   compareChoice: (fileId, choice) => post(`/api/import/compare/${fileId}/choice`, { choice }),
   coversMissing: () => request("/api/covers/missing"),
   coversFix: () => post("/api/covers/fix"),
+  monitored: () => request("/api/monitor/authors"),
+  setMonitor: (key, monitor) => put(`/api/monitor/authors/${encodeURIComponent(key)}`, { monitor }),
+  unmonitor: (key) => request(`/api/monitor/authors/${encodeURIComponent(key)}`, { method: "DELETE" }),
+  setWorkState: (key, state) => put(`/api/monitor/works/${encodeURIComponent(key)}`, { state }),
+  wanted: (q = "") => request(`/api/wanted?q=${encodeURIComponent(q)}`),
+  wantedNew: (years = 2) => request(`/api/wanted/new?years=${years}`),
   settings: () => request("/api/settings"),
   saveSettings: (body) =>
     request("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),

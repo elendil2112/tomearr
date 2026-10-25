@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import calibre_cli, compare, covers, db, importer, ingest, isbn, library, review, search
+from . import calibre_cli, compare, covers, db, importer, ingest, isbn, library, monitor, review, search
 from .scheduler import Scheduler
 from .config import KINDS, get_settings
 from .jobs import JobRunner
@@ -42,11 +42,22 @@ class SettingsBody(BaseModel):
     delete_duplicates: bool | None = None
     import_auto: bool | None = None
     fetch_covers: bool | None = None
+    profile_languages: str | None = None
+    profile_min_editions: int | None = None
+    profile_exclude_collections: bool | None = None
 
 
 class ImportRun(BaseModel):
     keys: list[str] | None = None     # plan item keys; None = everything selected by default
     library: bool = False             # convert books already in Calibre instead of ingest files
+
+
+class MonitorBody(BaseModel):
+    monitor: str                      # all | future | selected | none
+
+
+class WorkStateBody(BaseModel):
+    state: str | None                 # wanted | ignored | null
 
 
 class ChoiceBody(BaseModel):
@@ -94,9 +105,10 @@ class MatchBody(BaseModel):
 
 LANG_RE = re.compile(r"^(all|[a-z]{3})$")
 DEFAULT_SETTINGS = {"language": "eng", "calibre_path": library.DEFAULT_CALIBRE_PATH, **ingest.DEFAULTS,
-                    **importer.DEFAULTS}
+                    **importer.DEFAULTS, **monitor.PROFILE_DEFAULTS}
 NUMERIC_SETTINGS = {"ingest_interval_min": (0, 1440), "ingest_settle_sec": (0, 86400),
-                    "library_sync_interval_min": (0, 10080), "trash_days": (0, 3650)}
+                    "library_sync_interval_min": (0, 10080), "trash_days": (0, 3650),
+                    "profile_min_editions": (0, 1000)}
 
 
 class DownloadRequest(BaseModel):
@@ -214,7 +226,7 @@ def create_app() -> FastAPI:
         out = {k: db.get_meta(conn, f"setting_{k}", v) for k, v in DEFAULT_SETTINGS.items()}
         for k in NUMERIC_SETTINGS:
             out[k] = float(out[k]) if "." in str(out[k]) else int(out[k])
-        for k in ("delete_duplicates", "import_auto", "fetch_covers"):
+        for k in ("delete_duplicates", "import_auto", "fetch_covers", "profile_exclude_collections"):
             out[k] = str(out[k]) == "1"
         out["calibre_password_set"] = bool(db.get_meta(conn, "setting_calibre_password"))
         return out
@@ -265,7 +277,12 @@ def create_app() -> FastAPI:
                 fm = ",".join(sorted({f.strip().upper() for f in body.replace_formats.split(",")
                                       if f.strip() and f.strip().upper() != "EPUB"}))
                 db.set_meta(conn, "setting_replace_formats", fm)
-            for k in ("delete_duplicates", "import_auto", "fetch_covers"):
+            if body.profile_languages is not None:
+                langs = [l.strip().lower() for l in body.profile_languages.split(",") if l.strip()]
+                if any(not re.match(r"^[a-z]{3}$", l) for l in langs):
+                    raise HTTPException(400, "languages are 3-letter codes like eng, spa (blank = any language)")
+                db.set_meta(conn, "setting_profile_languages", ",".join(langs))
+            for k in ("delete_duplicates", "import_auto", "fetch_covers", "profile_exclude_collections"):
                 v = getattr(body, k)
                 if v is not None:
                     db.set_meta(conn, f"setting_{k}", "1" if v else "0")
@@ -310,6 +327,7 @@ def create_app() -> FastAPI:
             if not w:
                 raise HTTPException(404, "work not found")
             library.attach_owned(conn, [w])
+            w["monitor_status"] = monitor.work_status(conn, key)
             w["library_books"] = [dict(r) for r in conn.execute(
                 "SELECT calibre_id, title, authors, formats, match_method, match_confidence FROM library_books "
                 "WHERE work_key=? ORDER BY calibre_id", (key,))]
@@ -321,10 +339,9 @@ def create_app() -> FastAPI:
     def api_author(key: str):
         conn = conn_()
         try:
-            a = search.get_author(conn, key)
+            a = monitor.author_view(conn, key)
             if not a:
                 raise HTTPException(404, "author not found")
-            library.attach_owned(conn, a["works"])
             return a
         finally:
             conn.close()
@@ -557,6 +574,42 @@ def create_app() -> FastAPI:
         if not f.is_file():
             raise HTTPException(404, "no converted EPUB for this file yet")
         return FileResponse(f, media_type="application/epub+zip", filename=f"tomearr-preview-{file_id}.epub")
+
+    # --- monitoring and wanted (Phase 7) ---------------------------------------
+    def monitoring(fn):
+        conn = conn_()
+        try:
+            return fn(conn)
+        except KeyError:
+            raise HTTPException(404, "not found")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        finally:
+            conn.close()
+
+    @app.get("/api/monitor/authors")
+    def monitor_list():
+        return monitoring(monitor.monitored)
+
+    @app.put("/api/monitor/authors/{key}")
+    def monitor_set(key: str, body: MonitorBody):
+        return monitoring(lambda c: monitor.set_monitor(c, key, body.monitor))
+
+    @app.delete("/api/monitor/authors/{key}")
+    def monitor_remove(key: str):
+        return monitoring(lambda c: {"removed": monitor.remove_monitor(c, key)})
+
+    @app.put("/api/monitor/works/{key}")
+    def monitor_work(key: str, body: WorkStateBody):
+        return monitoring(lambda c: monitor.set_work(c, key, body.state))
+
+    @app.get("/api/wanted")
+    def wanted(q: str = "", waiting: bool = True):
+        return monitoring(lambda c: monitor.wanted(c, q, include_waiting=waiting))
+
+    @app.get("/api/wanted/new")
+    def wanted_new(years: int = Query(2, ge=0, le=20)):
+        return monitoring(lambda c: monitor.new_releases(c, years))
 
     # --- frontend ---------------------------------------------------------
     static = settings.static_dir
