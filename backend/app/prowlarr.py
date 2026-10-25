@@ -65,7 +65,9 @@ class Prowlarr:
             if url.startswith("magnet:"):
                 return "magnet", url
             try:
-                r = self.client.get(url, follow_redirects=False, headers={"X-Api-Key": self.key})
+                # the API key only goes to Prowlarr, never to an indexer a link redirects to
+                headers = {"X-Api-Key": self.key} if url.startswith(self.url + "/") else {}
+                r = self.client.get(url, follow_redirects=False, headers=headers)
             except httpx.HTTPError as exc:
                 raise ProwlarrError(f"couldn't download the release: {exc}") from exc
             if r.is_redirect:

@@ -87,6 +87,8 @@ class Deluge:
         opts = {}
         if path:
             opts["download_location"] = path
+        if kind == "magnet" and not str(payload).startswith("magnet:"):
+            raise ClientError("the release's magnet link didn't resolve to a magnet")
         if kind == "magnet":
             try:
                 tid = self._call("core.add_torrent_magnet", payload, opts)

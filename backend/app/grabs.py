@@ -72,12 +72,19 @@ def grab(conn, work_key: str, release_id: str, px=None, deluge=None, sab=None) -
     px = px or prowlarr.Prowlarr(**prowlarr.config(conn))
     note = None
     if rel["protocol"] == "torrent":
-        if rel.get("_download_url"):
-            kind, payload = px.fetch(rel["_download_url"])
-        elif rel.get("_magnet_url"):
-            kind, payload = "magnet", rel["_magnet_url"]
-        else:
+        # Either link may be a Prowlarr address that redirects to a .torrent or a magnet; fetch() resolves both.
+        # Try the download link first, then the magnet link.
+        links = [u for u in (rel.get("_download_url"), rel.get("_magnet_url")) if u]
+        if not links:
             raise GrabError("the indexer gave no download link")
+        kind = payload = None
+        for i, link in enumerate(links):
+            try:
+                kind, payload = px.fetch(link)
+                break
+            except prowlarr.ProwlarrError:
+                if i == len(links) - 1:
+                    raise
         dl = deluge or clients.deluge(conn)
         cid, note = dl.add(kind, payload, rel["title"], label=clients.setting(conn, "deluge_label"),
                            path=clients.setting(conn, "deluge_path"))
