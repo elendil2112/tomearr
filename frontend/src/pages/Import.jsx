@@ -19,6 +19,7 @@ const KIND = {
 const ORDER = ["add", "add_format", "replace", "convert_existing", "pdf_convert", "unpack", "delete_duplicate", "already_have",
   "cleanup", "pdf_waiting", "pdf_hold"];
 
+const TRASH_GROUPS = ["already_have", "delete_duplicate"];
 const CHOICE_LABEL = { calibre: "keeping Calibre's", ingest: "using this one", skip: "deciding later" };
 
 function Row({ label, a, b, better }) {
@@ -42,7 +43,7 @@ function ComparePanel({ item, onChange }) {
     setBusy(true);
     try {
       await api.compareChoice(item.file_id, choice);
-      onChange();
+      onChange(choice !== "skip");     // a real choice happens now; "decide later" just closes
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -107,7 +108,7 @@ function ComparePanel({ item, onChange }) {
         </button>
       </div>
       <p className="muted small-print">
-        Choices take effect when you press Import. “Use this one” replaces the EPUB in Calibre (the old one goes to the
+        “Keep Calibre's” moves this file to the trash right away. “Use this one” replaces the EPUB in Calibre (the old one goes to the
         trash, so it can be undone). Calibre's title and author stay as they are; if Calibre has no cover, it takes
         this file's.
       </p>
@@ -205,6 +206,11 @@ function PlanView({ library, onRun, running }) {
                 <button className="link" onClick={() => setSel({ ...sel, ...Object.fromEntries(items.map((i) => [i.key, !items.every((x) => sel[x.key])])) })}>
                   {items.every((x) => sel[x.key]) ? "none" : "all"}
                 </button>
+                {TRASH_GROUPS.includes(k) && items.some((x) => sel[x.key]) && (
+                  <button className="mini" disabled={running} onClick={() => onRun(items.filter((x) => sel[x.key]).map((x) => x.key), library)}>
+                    Move {formatNumber(items.filter((x) => sel[x.key]).length)} checked to the trash now
+                  </button>
+                )}
               </h3>
               <ul className="plan-items">
                 {items.map((i) => (
@@ -216,7 +222,7 @@ function PlanView({ library, onRun, running }) {
                         {i.work_title && <span className="muted"> → {i.work_title}</span>}
                         <span className="plan-steps">
                           {i.steps.join(" · ")}
-                          {i.choice && ` · you chose: ${CHOICE_LABEL[i.choice]}`}
+                          {i.choice && i.kind !== "already_have" && ` · you chose: ${CHOICE_LABEL[i.choice]}`}
                         </span>
                       </span>
                     </label>
@@ -227,7 +233,14 @@ function PlanView({ library, onRun, running }) {
                     )}
                     {open === i.key && (
                       <div className="cmp-wrap">
-                        <ComparePanel item={i} onChange={() => { setOpen(null); load(); }} />
+                        <ComparePanel
+                          item={i}
+                          onChange={(now) => {
+                            setOpen(null);
+                            if (now && !running) onRun([i.key], library);
+                            else load();
+                          }}
+                        />
                       </div>
                     )}
                   </li>
