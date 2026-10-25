@@ -19,7 +19,7 @@ from pathlib import Path
 
 import orjson
 
-from . import calibre_cli, db, extract, ingest, library, review
+from . import calibre_cli, db, extract, ingest, leftovers, library, review
 from .calibre_cli import Calibre, CalibreCLIError, Target
 
 DEFAULTS = {
@@ -37,7 +37,9 @@ SECRET = "calibre_password"
 NO_CONVERT = {"EPUB"}
 # Imports that deleted something; with the trash off there's nothing to put back, so they can't be undone.
 NO_UNDO_WITHOUT_TRASH = {"add", "add_format", "convert_existing", "delete_duplicate", "already_have", "unpack",
-                         "replace"}
+                         "replace", "cleanup"}
+# After these, the original has left the ingest folder, so its folder may now hold only leftovers.
+CLEANS_UP = {"add", "add_format", "replace", "already_have", "delete_duplicate", "unpack"}
 
 
 class ImportCancelled(Exception):
@@ -176,6 +178,16 @@ def plan(conn) -> dict:
                       "kind": "unpack", "select": True,
                       "steps": [f"unpack{f' ({len(entries)} ebook files)' if entries else ''} into a folder next to it; "
                                 "the next scan picks them up", "move the archive to the trash"]})
+    root = _ingest_root(conn)
+    if root.is_dir():
+        settle = int(ingest.setting(conn, "ingest_settle_sec"))
+        for folder, files in leftovers.sweep_candidates(root, settle):
+            rel = folder.relative_to(root.resolve()).as_posix()
+            kinds = sorted({(f.suffix.lower().lstrip(".") or f.name) for f in files})
+            items.append({"key": f"dir:{rel}", "path": rel + "/", "kind": "cleanup", "select": True,
+                          "files": len(files),
+                          "steps": [f"only leftovers here ({len(files)} file{'s' if len(files) != 1 else ''}"
+                                    f"{': ' + ', '.join(kinds[:6]) if kinds else ', empty'}); remove the folder"]})
     counts: dict[str, int] = {}
     for it in items:
         counts[it["kind"]] = counts.get(it["kind"], 0) + 1
@@ -399,6 +411,18 @@ def _import_file(conn, settings, cal: Calibre, it: dict, batch: int, trash: Path
                                        "kept_formats": kept}).decode()}
 
 
+def _cleanup_folder(conn, it: dict, trash: Path | None) -> dict:
+    root = _ingest_root(conn).resolve()
+    folder = (root / it["path"].rstrip("/")).resolve()
+    if folder == root or root not in folder.parents or not folder.is_dir():
+        raise ImportError_("that folder is gone or outside the ingest folder")
+    files = leftovers.junk_tree(folder, int(ingest.setting(conn, "ingest_settle_sec")))
+    if files is None:
+        raise ImportError_("something other than leftovers is in that folder now; left it alone")
+    gone = leftovers._remove_tree(root, folder, files, trash)
+    return {"action": "cleanup", "path": it["path"], "meta_json": orjson.dumps({"leftovers": gone}).decode()}
+
+
 def _convert_existing(conn, settings, cal: Calibre, it: dict, trash: Path) -> dict:
     cid, fmt = it["calibre_id"], it["format"]
     r = conn.execute("SELECT relpath FROM calibre_files WHERE calibre_id=? AND format=?", (cid, fmt)).fetchone()
@@ -440,7 +464,7 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
     items = [i for i in p["items"] if (i["key"] in keys if keys is not None else i["select"])]
     items = [i for i in items if i["kind"] not in ("pdf_hold", "pdf_waiting")]
     needs_calibre = any(i["kind"] in ("add", "add_format", "convert_existing", "replace") for i in items)
-    needs_ingest_write = any("file_id" in i for i in items)
+    needs_ingest_write = any("file_id" in i or i["kind"] == "cleanup" for i in items)
     if needs_ingest_write and not os.access(_ingest_root(conn), os.W_OK):
         raise ImportError_(f"The ingest folder {_ingest_root(conn)} is read-only. Remove ':ro' from the /ingest "
                            "mount in docker-compose.yml so Tomearr can move imported files out of it.")
@@ -464,8 +488,16 @@ def run(conn, settings, progress, cancelled, keys: list[str] | None = None, batc
         try:
             if it["kind"] == "convert_existing":
                 res = _convert_existing(conn, settings, cal, it, trash)
+            elif it["kind"] == "cleanup":
+                res = _cleanup_folder(conn, it, trash)
             else:
                 res = _import_file(conn, settings, cal, it, batch or 0, trash)
+            if res.get("action") in CLEANS_UP and res.get("path"):
+                gone = leftovers.cleanup_after(_ingest_root(conn), res["path"], trash,
+                                               int(ingest.setting(conn, "ingest_settle_sec")))
+                if gone:
+                    meta = orjson.loads(res.get("meta_json") or "{}") or {}
+                    res["meta_json"] = orjson.dumps({**meta, "leftovers": gone}).decode()
             if trash is None and res.get("action") in NO_UNDO_WITHOUT_TRASH:
                 meta = orjson.loads(res.get("meta_json") or "{}") or {}
                 res["meta_json"] = orjson.dumps({**meta, "no_undo": True}).decode()
@@ -541,7 +573,10 @@ def undo(conn, import_id: int, settings=None) -> dict:
                     d.rmdir()
             if not any(folder.iterdir()):
                 folder.rmdir()
-    restored = _restore(conn, r["trash_path"], r["path"])
+    restored = _restore(conn, r["trash_path"], r["path"]) if a != "cleanup" else None
+    left = (orjson.loads(r["meta_json"] or "{}") or {}).get("leftovers") or []
+    if left:
+        leftovers.restore(left, _ingest_root(conn))
     conn.execute("UPDATE imports SET status='undone', undone_at=datetime('now') WHERE id=?", (import_id,))
     conn.commit()
     return {"id": import_id, "action": a, "restored": restored}
