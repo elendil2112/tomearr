@@ -13,7 +13,7 @@ guides, box sets, duplicate works and foreign-language editions under big author
 import re
 from datetime import datetime, timezone
 
-from . import db, ingest, library, search
+from . import db, identity, ingest, library, search
 from .search import WORK_COLS
 
 MONITOR_MODES = ("all", "future", "selected", "none")
@@ -110,6 +110,39 @@ def _owned(conn, keys: list[str]) -> dict[str, list[str]]:
     return out
 
 
+_INDEX: dict = {}
+
+
+def _library_index(conn):
+    """identity.LibraryIndex, rebuilt only when the library changes (after a sync or an import)."""
+    stamp = (db.get_meta(conn, "library_synced_at"),
+             conn.execute("SELECT COUNT(*), max(calibre_id) FROM library_books").fetchone()[:])
+    if _INDEX.get("stamp") != stamp:
+        _INDEX.update(stamp=stamp, index=identity.LibraryIndex(conn))
+    return _INDEX["index"]
+
+
+def _owned_as_other_record(conn, works: list[dict]) -> dict[str, list[str]]:
+    """Works you own as a Calibre book matched to a different Open Library record (same title and author)."""
+    if not works:
+        return {}
+    idx = _library_index(conn)
+    names: dict[str, list[str]] = {}
+    keys = [w["ol_key"] for w in works]
+    for i in range(0, len(keys), 500):
+        chunk = keys[i:i + 500]
+        for wk, n in conn.execute(f"SELECT wa.work_key, a.name FROM work_authors wa JOIN authors a "
+                                  f"ON a.ol_key = wa.author_key WHERE wa.work_key IN ({','.join('?' * len(chunk))})",
+                                  chunk):
+            names.setdefault(wk, []).append(n)
+    out = {}
+    for w in works:
+        hits = idx.find(w["title"], names.get(w["ol_key"], []), w.get("subtitle"))
+        if hits:
+            out[w["ol_key"]] = [f for b in hits for f in b["formats_list"]]
+    return out
+
+
 def _in_ingest(conn, keys: list[str]) -> set[str]:
     out: set[str] = set()
     for i in range(0, len(keys), 500):
@@ -124,6 +157,7 @@ def classify(conn, works: list[dict], monitor: dict | None, baseline: set[str], 
     """Give each work a status: owned | wanted | in_ingest | ignored | filtered | unmonitored, with a reason."""
     keys = [w["ol_key"] for w in works]
     owned = _owned(conn, keys)
+    owned.update(_owned_as_other_record(conn, [w for w in works if w["ol_key"] not in owned]))
     waiting = _in_ingest(conn, keys)
     downloading = {r[0] for r in conn.execute(
         "SELECT work_key FROM grabs WHERE state IN ('queued','downloading','completed')")}

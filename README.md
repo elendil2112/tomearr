@@ -243,6 +243,26 @@ where it is, shown on the Import page as *Still seeding*. Once you remove the to
 *Done seeding* and goes to the trash with the next import. If Deluge can't be reached, Tomearr assumes its own
 torrents are still seeding. Turn this off in Settings if your torrents download somewhere else.
 
+## One book, one Calibre entry
+
+Open Library often has several records for one book (one per edition or ISBN that was never merged), with titles and
+author names that differ a little: "The Adventures of Sherlock Holmes" / "Adventures of Sherlock Holmes
+(Illustrated)", "Arthur Conan Doyle" / "Sir Arthur Conan Doyle". Tomearr treats two books as the same when they share
+an author surname and their titles agree once articles, punctuation, bracketed notes, word order and (when only one
+has one) the subtitle are set aside. Numbers and differing subtitles keep books apart ("Dune" / "Dune Messiah", "Star
+Wars: Thrawn" / "Star Wars: Thrawn: Alliances").
+
+- **Importing a book Calibre already has** under another record: its EPUB goes onto that Calibre book (or, if that
+  book has an EPUB, it's *Already have it*), instead of a second entry.
+- **Several versions in the ingest folder**: only the best is imported: EPUB over AZW3 over MOBI over PDF, then a
+  complete, publisher-made EPUB with a cover over a short, converted one; a PDF you approved always wins. The others
+  are *Other versions*, trashed once the best one is in Calibre (never before).
+- **Wanted list**: a book you own under another record counts as owned, so it isn't searched for or grabbed.
+- **Duplicates already in Calibre** show on Import → *Books already in Calibre* as *Duplicate books*: the best copy is
+  kept, any format only the other copy has is moved onto it, and the other copy goes to Calibre's trash bin (with a
+  backup in Tomearr's trash). Copies Tomearr added are ticked; ones that were there before are for you to tick.
+- Wrong call? **not the same book?** next to an item imports it as a book of its own.
+
 ## How search works
 
 - Authors and works are loaded from the dumps. Works with no author are skipped by default (toggle on the Catalog page).
